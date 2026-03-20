@@ -1,0 +1,43 @@
+{
+  "name": "jsmedgl",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web-based medical imaging rendering library",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @jsmedgl/demo dev",
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "keywords": [
+    "medical-imaging",
+    "nifti",
+    "volume-rendering",
+    "webgl",
+    "webgpu"
+  ],
+  "author": "jsMedgl Team",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "eslint": "^8.56.0",
+    "eslint-plugin-import": "^2.29.0",
+    "eslint-plugin-prettier": "^5.0.0",
+    "gl-matrix": "^3.4.3",
+    "jsdom": "^29.0.0",
+    "prettier": "^3.1.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  }
+}

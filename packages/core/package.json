@@ -1,0 +1,36 @@
+{
+  "name": "@jsmedgl/core",
+  "version": "0.1.0",
+  "description": "Core rendering engine for jsMedgl",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@jsmedgl/parser-nifti": "workspace:*",
+    "gl-matrix": "^3.4.3",
+    "three": "^0.170.0",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.170.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "three": ">=0.160.0"
+  }
+}
