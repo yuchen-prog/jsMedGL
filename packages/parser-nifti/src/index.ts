@@ -1,28 +1,32 @@
 // NIfTI Parser - Main Entry Point
 
-export interface NiftiParserOptions {
-  strictMode?: boolean;
-}
+export type {
+  NiftiHeader,
+  NiftiVolume,
+  OrientationReport,
+  NiftiParserOptions
+} from './types';
 
-export function createNiftiParser(_options?: NiftiParserOptions) {
-  return {
-    parse: (buffer: ArrayBuffer) => {
-      console.log('Parsing NIfTI buffer, size:', buffer.byteLength);
-      return null;
-    },
-    parseHeader: (_buffer: ArrayBuffer) => {
-      console.log('Parsing NIfTI header');
-      return null;
-    },
-  };
-}
+export {
+  NiftiDataType,
+  NiftiXform
+} from './types';
 
-export function parseNifti(buffer: ArrayBuffer) {
-  console.log('parseNifti called, size:', buffer.byteLength);
-  return null;
-}
+export {
+  parseNifti,
+  parseNiftiHeader,
+  createNiftiParser
+} from './parser';
 
-export function parseNiftiHeader(_buffer: ArrayBuffer) {
-  console.log('parseNiftiHeader called');
-  return null;
-}
+export {
+  extractAffineMatrix,
+  ijkToRas,
+  rasToIjk,
+  rasToLps,
+  lpsToRas,
+  validateOrientation
+} from './coordinate';
+
+export {
+  getDataTypeSize
+} from './utils';
