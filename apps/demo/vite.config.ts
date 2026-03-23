@@ -6,6 +6,7 @@ export default defineConfig({
     alias: {
       '@jsmedgl/core': resolve(__dirname, '../../packages/core/src'),
       '@jsmedgl/parser-nifti': resolve(__dirname, '../../packages/parser-nifti/src'),
+      '@jsmedgl/renderer-2d': resolve(__dirname, '../../packages/renderer-2d/src'),
     },
   },
   server: {

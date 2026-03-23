@@ -10,7 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@jsmedgl/core": "workspace:*"
+    "@jsmedgl/core": "workspace:*",
+    "@jsmedgl/parser-nifti": "workspace:*",
+    "@jsmedgl/renderer-2d": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

@@ -3,10 +3,14 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
+    "jsx": "react-jsx",
     "composite": true,
     "declaration": true,
     "declarationMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.spec.ts"]
+  "exclude": ["node_modules", "dist", "**/*.test.ts"],
+  "references": [
+    { "path": "../parser-nifti" }
+  ]
 }

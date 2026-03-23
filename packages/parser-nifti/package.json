@@ -20,9 +20,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "gl-matrix": "^3.4.3"
+    "gl-matrix": "^3.4.3",
+    "pako": "^2.1.0"
   },
   "devDependencies": {
+    "@types/pako": "^2.0.4",
     "typescript": "^5.3.0",
     "vitest": "^1.0.0"
   }
