@@ -33,10 +33,7 @@ class SliceViewImpl implements ISliceView {
   private crosshairElement: HTMLElement | null = null;
   private labelsElement: HTMLElement | null = null;
   private listeners: Map<string, Set<(data: any) => void>> = new Map();
-  private windowWidth: number = 255;
-  private windowCenter: number = 128;
   private volumeMin: number = 0;
-  private volumeMax: number = 255;
   private volumeRange: number = 255;
 
   constructor(volume: NiftiVolume, options: SliceViewOptions) {
@@ -56,9 +53,7 @@ class SliceViewImpl implements ISliceView {
       if (v > vMax) vMax = v;
     }
     this.volumeMin = vMin;
-    this.volumeMax = vMax;
     this.volumeRange = vMax - vMin;
-    console.log('[SliceView] Volume stats - min:', this.volumeMin.toFixed(2), 'max:', this.volumeMax.toFixed(2), 'range:', this.volumeRange.toFixed(2));
 
     this.canvas = document.createElement('canvas');
     this.canvas.style.position = 'absolute';
@@ -68,8 +63,6 @@ class SliceViewImpl implements ISliceView {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D context not supported');
     this.ctx = ctx;
-
-    console.log('[SliceView]', this.orientation, '- container:', this.container.offsetWidth, 'x', this.container.offsetHeight);
 
     this.setupDOM(options.enableCrosshair !== false, options.enableOrientationLabels !== false);
     this.setupEventHandlers();
@@ -84,7 +77,6 @@ class SliceViewImpl implements ISliceView {
 
     this.canvas.width = this.container.offsetWidth;
     this.canvas.height = this.container.offsetHeight;
-    console.log('[SliceView]', this.orientation, '- canvas size:', this.canvas.width, 'x', this.canvas.height);
 
     this.container.appendChild(this.canvas);
 
@@ -148,52 +140,8 @@ class SliceViewImpl implements ISliceView {
     const [sliceW, sliceH, planeBase] = this.getSliceGeometry(d0, d1, d2);
 
     const pixels = new Uint8ClampedArray(sliceW * sliceH * 4);
-
-    // Compute byte offset for each voxel: linearIdx * byteSize
-    // axial:   i = x + y*dim0 + z*dim0*dim1  → x varies fastest, then y, then z
-    // coronal: i = x + z*dim0*dim1 + y*dim0  → x varies fastest, then z, then y
-    // sagittal: i = y*dim0 + z*dim0*dim1 + x → y varies fastest, then z, then x
-    let min = Infinity, max = -Infinity;
-    const rawBuf = new Uint8Array(data);
-
-    if (this.orientation === 'axial') {
-      // z = planeBase
-      for (let y = 0; y < sliceH; y++) {
-        for (let x = 0; x < sliceW; x++) {
-          const linearIdx = x + y * d0 + planeBase * d0 * d1;
-          const val = this.readVoxel(data, datatype, linearIdx * byteSize);
-          if (val < min) min = val;
-          if (val > max) max = val;
-          rawBuf[linearIdx] = Math.max(0, Math.min(255, val)); // store normalized for debug
-        }
-      }
-    } else if (this.orientation === 'coronal') {
-      // y = planeBase
-      for (let z = 0; z < sliceH; z++) {
-        for (let x = 0; x < sliceW; x++) {
-          const linearIdx = x + z * d0 * d1 + planeBase * d0;
-          const val = this.readVoxel(data, datatype, linearIdx * byteSize);
-          if (val < min) min = val;
-          if (val > max) max = val;
-        }
-      }
-    } else {
-      // sagittal: x = planeBase
-      for (let z = 0; z < sliceH; z++) {
-        for (let y = 0; y < sliceW; y++) {
-          const linearIdx = y * d0 + z * d0 * d1 + planeBase;
-          const val = this.readVoxel(data, datatype, linearIdx * byteSize);
-          if (val < min) min = val;
-          if (val > max) max = val;
-        }
-      }
-    }
-
     const range = this.volumeRange;
-    console.log('[SliceView]', this.orientation, 'slice', this.sliceIndex,
-      '- using volume range:', range.toFixed(2), '(min:', this.volumeMin.toFixed(2), 'max:', this.volumeMax.toFixed(2), ')');
 
-    // Second pass: normalize to 0-255 and write pixels
     if (this.orientation === 'axial') {
       for (let y = 0; y < sliceH; y++) {
         for (let x = 0; x < sliceW; x++) {
@@ -234,9 +182,9 @@ class SliceViewImpl implements ISliceView {
 
   private getSliceGeometry(d0: number, d1: number, d2: number): [number, number, number] {
     switch (this.orientation) {
-      case 'axial':   return [d0, d1, this.sliceIndex];    // [width, height, z]
-      case 'coronal': return [d0, d2, this.sliceIndex];    // [width, height, y]
-      case 'sagittal': return [d1, d2, this.sliceIndex];   // [width, height, x]
+      case 'axial':   return [d0, d1, this.sliceIndex];
+      case 'coronal': return [d0, d2, this.sliceIndex];
+      case 'sagittal': return [d1, d2, this.sliceIndex];
     }
   }
 
@@ -265,38 +213,30 @@ class SliceViewImpl implements ISliceView {
 
   render(): void {
     const { width: sliceW, height: sliceH, data: pixels } = this.extractSliceData();
+
+    const containerW = this.container.offsetWidth;
+    const containerH = this.container.offsetHeight;
+    if (this.canvas.width !== containerW || this.canvas.height !== containerH) {
+      this.canvas.width = containerW;
+      this.canvas.height = containerH;
+    }
+
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
 
-    console.log('[SliceView]', this.orientation, '- render slice', this.sliceIndex,
-      '- canvas:', canvasW, 'x', canvasH, '- slice:', sliceW, 'x', sliceH,
-      '- volumeRange:', this.volumeRange.toFixed(1));
-
-    // Verify pixel array has correct size
-    const expectedPixels = sliceW * sliceH * 4;
-    console.log('[SliceView] pixels length:', pixels.length, 'expected:', expectedPixels, '- match:', pixels.length === expectedPixels);
-
-    // Check center pixel value
-    const centerIdx = Math.floor(sliceH / 2) * sliceW + Math.floor(sliceW / 2);
-    const centerR = pixels[centerIdx * 4];
-    console.log('[SliceView] center pixel value:', centerR);
-
-    // Draw: fill canvas black first
+    this.ctx.clearRect(0, 0, canvasW, canvasH);
     this.ctx.fillStyle = '#000';
     this.ctx.fillRect(0, 0, canvasW, canvasH);
 
-    // Scale slice to fit canvas
     const scale = Math.min(canvasW / sliceW, canvasH / sliceH);
     const drawW = sliceW * scale;
     const drawH = sliceH * scale;
     const drawX = (canvasW - drawW) / 2;
     const drawY = (canvasH - drawH) / 2;
 
-    // Create ImageData from pixel array
     const imageData = new ImageData(sliceW, sliceH);
     imageData.data.set(pixels);
 
-    // Draw via OffscreenCanvas for scaling
     const offscreen = new OffscreenCanvas(sliceW, sliceH);
     const offCtx = offscreen.getContext('2d')!;
     offCtx.putImageData(imageData, 0, 0);
@@ -314,9 +254,8 @@ class SliceViewImpl implements ISliceView {
 
   getSliceIndex(): number { return this.sliceIndex; }
 
-  setWindowLevel(window: number, level: number): void {
-    this.windowWidth = window;
-    this.windowCenter = level;
+  setWindowLevel(_window: number, _level: number): void {
+    // Window/Level adjustment - for future use
     this.render();
   }
 

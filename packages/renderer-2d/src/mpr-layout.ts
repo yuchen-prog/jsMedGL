@@ -1,7 +1,7 @@
 // MPR Layout - Multi-Planar Reconstruction Layout Manager
 
 import { createSliceView, SliceView } from './slice-view';
-import type { SliceOrientation, CrosshairPosition, WindowLevel } from './types';
+import type { SliceOrientation, WindowLevel } from './types';
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
 
 export interface MPRLayoutOptions {
@@ -26,14 +26,12 @@ class MPRLayoutImpl implements MPRLayout {
   private container: HTMLElement;
   private volume: NiftiVolume;
   private view!: SliceView;
-  private layout: string;
   private currentWindowLevel: WindowLevel;
   private listeners: Map<string, Set<Function>> = new Map();
 
   constructor(options: MPRLayoutOptions) {
     this.container = options.container;
     this.volume = options.volume;
-    this.layout = options.layout || 'axial';
     this.currentWindowLevel = options.initialWindowLevel || { window: 255, level: 128 };
 
     this.injectCSS();

@@ -1,8 +1,8 @@
-// jsMedgl Demo - NIfTI Viewer
+// jsMedgl Demo - NIfTI Viewer with Canvas 2D Rendering
 import { parseNifti } from '@jsmedgl/parser-nifti';
-import { createMPRLayout, type MPRLayout } from '@jsmedgl/renderer-2d';
+import { createSliceView, type SliceView } from '@jsmedgl/renderer-2d';
 
-let mprLayout: MPRLayout | null = null;
+let sliceView: SliceView | null = null;
 let loadedVolume: any = null;
 
 async function loadFile(file: File) {
@@ -10,31 +10,34 @@ async function loadFile(file: File) {
     const buffer = await file.arrayBuffer();
     const volume = await parseNifti(buffer);
     loadedVolume = volume;
-    initMPR(volume);
+    initViewer(volume);
   } catch (err) {
     console.error('[main] Load error:', err);
     document.getElementById('error-msg')!.textContent = `Error: ${err}`;
   }
 }
 
-function initMPR(volume: any) {
+function initViewer(volume: any) {
   const container = document.getElementById('viewer')!;
 
-  if (mprLayout) {
-    mprLayout.dispose();
+  if (sliceView) {
+    sliceView.dispose();
   }
 
-  mprLayout = createMPRLayout({
+  sliceView = createSliceView(volume, {
     container,
-    volume,
-    layout: 'single',
-    initialWindowLevel: { window: 255, level: 128 },
+    orientation: 'axial',
+    enableCrosshair: true,
+    enableOrientationLabels: true,
   });
 
   // Update sidebar info
   document.getElementById('info-dims')!.textContent = volume.dimensions.join(' × ');
   document.getElementById('info-spacing')!.textContent = volume.spacing.map((s: number) => s.toFixed(3)).join(' × ');
-  document.getElementById('info-type')!.textContent = ['UINT8','INT16','INT32','FLOAT32','FLOAT64','','RGB24'][volume.header.datatype - 2] || String(volume.header.datatype);
+  const typeNames: Record<number, string> = {
+    2: 'UINT8', 4: 'INT16', 8: 'INT32', 16: 'FLOAT32', 64: 'FLOAT64', 128: 'RGB24'
+  };
+  document.getElementById('info-type')!.textContent = typeNames[volume.header.datatype] || String(volume.header.datatype);
 }
 
 function initApp() {
@@ -44,7 +47,7 @@ function initApp() {
   root.innerHTML = `
     <div class="app">
       <div class="header">
-        <span class="title">jsMed</span>
+        <span class="title">jsMed (Canvas 2D)</span>
         <span class="version">v0.1.0</span>
       </div>
       <div class="body">
@@ -127,12 +130,12 @@ function initApp() {
 
   wSlider.addEventListener('input', () => {
     document.getElementById('w-val')!.textContent = wSlider.value;
-    mprLayout?.setWindowLevel(+wSlider.value, +lSlider.value);
+    sliceView?.setWindowLevel(+wSlider.value, +lSlider.value);
   });
 
   lSlider.addEventListener('input', () => {
     document.getElementById('l-val')!.textContent = lSlider.value;
-    mprLayout?.setWindowLevel(+wSlider.value, +lSlider.value);
+    sliceView?.setWindowLevel(+wSlider.value, +lSlider.value);
   });
 
   // Presets
@@ -144,7 +147,7 @@ function initApp() {
       lSlider.value = String(l);
       document.getElementById('w-val')!.textContent = String(w);
       document.getElementById('l-val')!.textContent = String(l);
-      mprLayout?.setWindowLevel(w, l);
+      sliceView?.setWindowLevel(w, l);
     });
   });
 
@@ -160,25 +163,10 @@ function initApp() {
     })
     .then(volume => {
       if (!volume) return;
-      console.log('[main] vox_offset:', volume.header.vox_offset);
-      console.log('[main] sizeof_hdr:', volume.header.sizeof_hdr);
-      console.log('[main] datatype:', volume.header.datatype);
-      console.log('[main] bitpix:', volume.header.bitpix);
-      console.log('[main] dim:', volume.header.dim);
-      console.log('[main] data byteLength:', volume.data.byteLength);
-      console.log('[main] expected UINT8 bytes:', volume.header.dim[1] * volume.header.dim[2] * volume.header.dim[3]);
-      console.log('[main] expected FLOAT64 bytes:', volume.header.dim[1] * volume.header.dim[2] * volume.header.dim[3] * 8);
-
-      // Show first 10 float64 values
-      const fd = new Float64Array(volume.data);
-      console.log('[main] float64[0:10]:', Array.from(fd.slice(0, 10)).map(v => v.toFixed(1)));
-      // Show first 10 uint8 values
-      const ud = new Uint8Array(volume.data);
-      console.log('[main] uint8[0:10]:', Array.from(ud.slice(0, 10)));
       document.getElementById('volume-info')!.style.display = 'block';
       document.getElementById('view-controls')!.style.display = 'block';
       document.getElementById('drop-overlay')!.style.display = 'none';
-      initMPR(volume);
+      initViewer(volume);
     })
     .catch(() => {});
 }

@@ -19,3 +19,5 @@ export { createTextureManager } from './texture-manager';
 export { createSliceExtractor } from './slice-extractor';
 export { createMPRLayout } from './mpr-layout';
 export type { MPRLayout, MPRLayoutOptions } from './mpr-layout';
+export { createWebGLSliceView } from './webgl-slice-view';
+export type { WebGLSliceView, WebGLSliceViewOptions } from './webgl-slice-view';

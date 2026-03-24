@@ -1,13 +1,16 @@
-// Slice Extractor - Extract 2D slices from 3D volume
+// Slice Extractor - Extract 2D slices from 3D volume using WebGL
 
 import type {
-  SliceExtractor,
-  SliceOrientation,
+  SliceExtractor as ISliceExtractor,
   WindowLevel,
   ExtractedSlice
 } from './types';
 
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
+
+export interface SliceExtractor extends ISliceExtractor {}
+
+type SliceOrientation = 'axial' | 'coronal' | 'sagittal';
 
 export function createSliceExtractor(
   gl: WebGL2RenderingContext,
@@ -53,7 +56,6 @@ class SliceExtractorImpl implements SliceExtractor {
   private volume: NiftiVolume;
   private program: WebGLProgram | null = null;
   private positionBuffer: WebGLBuffer | null = null;
-  private volumeTexture: WebGLTexture | null = null;
   private uniforms: {
     sliceTexture: WebGLUniformLocation | null;
     windowWidth: WebGLUniformLocation | null;
@@ -65,13 +67,16 @@ class SliceExtractorImpl implements SliceExtractor {
   };
   private windowLevel: WindowLevel = { window: 255, level: 128 };
   private sliceTextures: Map<string, WebGLTexture> = new Map();
+  private normalizedData: Uint8Array;
 
   constructor(gl: WebGL2RenderingContext, volume: NiftiVolume) {
     this.gl = gl;
     this.volume = volume;
+    this.normalizedData = new Uint8Array(0);
+
     this.initShaders();
     this.initBuffers();
-    this.uploadVolumeData();
+    this.normalizeVolumeData();
   }
 
   private initShaders(): void {
@@ -138,98 +143,52 @@ class SliceExtractorImpl implements SliceExtractor {
     this.positionBuffer = buffer;
   }
 
-  private uploadVolumeData(): void {
-    const gl = this.gl;
-    const { dimensions, data } = this.volume;
+  private getDataTypeSize(datatype: number): number {
+    const sizes: Record<number, number> = {
+      2: 1, 4: 2, 8: 4, 16: 4, 64: 8,
+      256: 1, 512: 2, 768: 4, 1024: 8, 1280: 8
+    };
+    return sizes[datatype] || 1;
+  }
 
-    console.log('[SliceExtractor] Uploading volume data');
-    console.log('[SliceExtractor] Dimensions:', dimensions);
-    console.log('[SliceExtractor] Data byteLength:', data.byteLength);
-    console.log('[SliceExtractor] Data constructor:', data.constructor.name);
-
-    // Check raw data at multiple positions
-    const raw = new Uint8Array(data);
-    console.log('[SliceExtractor] Raw bytes [0:10]:', Array.from(raw.slice(0, 10)));
-    console.log('[SliceExtractor] Raw bytes [352:362]:', Array.from(raw.slice(352, 362)));
-    console.log('[SliceExtractor] Raw bytes [10000:10010]:', Array.from(raw.slice(10000, 10010)));
-
-    // Find min/max and first non-zero position
-    let min = 255, max = 0, firstNonZero = -1;
-    for (let i = 0; i < raw.length; i++) {
-      if (raw[i] > max) max = raw[i];
-      if (raw[i] < min) min = raw[i];
-      if (firstNonZero < 0 && raw[i] > 0) firstNonZero = i;
+  private readVoxel(data: ArrayBuffer, datatype: number, byteOffset: number): number {
+    const view = new DataView(data, byteOffset);
+    switch (datatype) {
+      case 2:   return view.getUint8(0);
+      case 4:   return view.getInt16(0, true);
+      case 8:   return view.getInt32(0, true);
+      case 16:  return view.getFloat32(0, true);
+      case 64:  return view.getFloat64(0, true);
+      case 256: return view.getInt8(0);
+      case 512: return view.getUint16(0, true);
+      case 768: return view.getUint32(0, true);
+      default:  return view.getUint8(0);
     }
-    console.log('[SliceExtractor] Full volume data - min:', min, 'max:', max, 'firstNonZero:', firstNonZero);
+  }
 
-    // Scan a few slices to find where data is
-    const sliceSize = dimensions[0] * dimensions[1];
-    for (let z = 0; z < Math.min(10, dimensions[2]); z++) {
-      const offset = z * sliceSize;
-      let nonZero = 0;
-      for (let i = 0; i < sliceSize; i++) {
-        if (raw[offset + i] > 0) nonZero++;
-      }
-      console.log('[SliceExtractor] Slice', z, '- nonZero voxels:', nonZero, '/', sliceSize);
+  private normalizeVolumeData(): void {
+    const { data, header } = this.volume;
+    const datatype = header.datatype;
+    const byteSize = this.getDataTypeSize(datatype);
+    const numVoxels = data.byteLength / byteSize;
+
+    // Find min/max
+    let vMin = Infinity, vMax = -Infinity;
+    const step = Math.max(1, Math.floor(numVoxels / 10000));
+    for (let i = 0; i < numVoxels; i += step) {
+      const v = this.readVoxel(data, datatype, i * byteSize);
+      if (v < vMin) vMin = v;
+      if (v > vMax) vMax = v;
     }
+    const range = vMax - vMin;
 
-    const texture = gl.createTexture();
-    if (!texture) throw new Error('Failed to create 3D texture');
-
-    gl.bindTexture(gl.TEXTURE_3D, texture);
-
-    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-
-    // Convert data to Uint8Array and normalize to visible range
-    let uint8Data: Uint8Array;
-    if (data instanceof Uint8Array) {
-      uint8Data = data;
-    } else {
-      uint8Data = new Uint8Array(data);
+    // Normalize all data to Uint8Array
+    this.normalizedData = new Uint8Array(numVoxels);
+    for (let i = 0; i < numVoxels; i++) {
+      const v = this.readVoxel(data, datatype, i * byteSize);
+      let normalized = range > 0 ? Math.round(((v - vMin) / range) * 255) : (v > 0 ? 255 : 0);
+      this.normalizedData[i] = Math.max(0, Math.min(255, normalized));
     }
-
-    // Normalize data to [0, 255] based on actual min/max in the volume
-    let dataMin = 255, dataMax = 0;
-    for (let i = 0; i < uint8Data.length; i++) {
-      if (uint8Data[i] > dataMax) dataMax = uint8Data[i];
-      if (uint8Data[i] < dataMin) dataMin = uint8Data[i];
-    }
-    const range = dataMax - dataMin;
-    console.log('[SliceExtractor] Data range: min=', dataMin, 'max=', dataMax, 'range=', range);
-
-    if (range > 0 && range < 255) {
-      // Normalize to fill 0-255 range for better visibility
-      for (let i = 0; i < uint8Data.length; i++) {
-        uint8Data[i] = Math.round(((uint8Data[i] - dataMin) / range) * 255);
-      }
-      console.log('[SliceExtractor] Data normalized to 0-255 range');
-    }
-
-    gl.texImage3D(
-      gl.TEXTURE_3D,
-      0,
-      gl.R8,
-      dimensions[0],
-      dimensions[1],
-      dimensions[2],
-      0,
-      gl.RED,
-      gl.UNSIGNED_BYTE,
-      uint8Data
-    );
-
-    const error = gl.getError();
-    if (error !== gl.NO_ERROR) {
-      console.error('[SliceExtractor] WebGL error after texImage3D:', error);
-    } else {
-      console.log('[SliceExtractor] Volume data uploaded successfully');
-    }
-
-    this.volumeTexture = texture;
   }
 
   extractAxial(sliceIndex: number): ExtractedSlice {
@@ -303,54 +262,44 @@ class SliceExtractorImpl implements SliceExtractor {
   }
 
   private extractSliceData(orientation: SliceOrientation, sliceIndex: number): Uint8Array {
-    const { dimensions, data } = this.volume;
-    const volumeData = new Uint8Array(data);
+    const { dimensions } = this.volume;
+    const d0 = dimensions[0], d1 = dimensions[1];
 
-    let width: number, height: number, depth: number;
-    let offset: number, strideX: number, strideY: number;
+    let width: number, height: number;
+    let sliceData: Uint8Array;
 
-    switch (orientation) {
-      case 'axial':
-        width = dimensions[0];
-        height = dimensions[1];
-        depth = dimensions[2];
-        offset = sliceIndex * width * height;
-        strideX = 1;
-        strideY = width;
-        break;
-
-      case 'coronal':
-        width = dimensions[0];
-        height = dimensions[2];
-        depth = dimensions[1];
-        offset = sliceIndex * width;
-        strideX = 1;
-        strideY = width * depth;
-        break;
-
-      case 'sagittal':
-        width = dimensions[1];
-        height = dimensions[2];
-        depth = dimensions[0];
-        offset = sliceIndex;
-        strideX = depth;
-        strideY = width * depth;
-        break;
-    }
-
-    const sliceData = new Uint8Array(width * height);
-
-    // Debug: check extracted slice data
-    let nonZero = 0;
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const srcIndex = offset + y * strideY + x * strideX;
-        const val = volumeData[srcIndex];
-        sliceData[y * width + x] = val;
-        if (val > 0) nonZero++;
+    if (orientation === 'axial') {
+      width = d0;
+      height = d1;
+      sliceData = new Uint8Array(width * height);
+      const offset = sliceIndex * width * height;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          sliceData[y * width + x] = this.normalizedData[offset + y * width + x];
+        }
+      }
+    } else if (orientation === 'coronal') {
+      width = d0;
+      height = dimensions[2];
+      sliceData = new Uint8Array(width * height);
+      for (let z = 0; z < height; z++) {
+        for (let x = 0; x < width; x++) {
+          const linearIdx = x + sliceIndex * d0 + z * d0 * d1;
+          sliceData[z * width + x] = this.normalizedData[linearIdx];
+        }
+      }
+    } else {
+      // sagittal
+      width = d1;
+      height = dimensions[2];
+      sliceData = new Uint8Array(width * height);
+      for (let z = 0; z < height; z++) {
+        for (let y = 0; y < width; y++) {
+          const linearIdx = sliceIndex + y * d0 + z * d0 * d1;
+          sliceData[z * width + y] = this.normalizedData[linearIdx];
+        }
       }
     }
-    console.log('[SliceExtractor] extractSlice', orientation, 'slice', sliceIndex, '- nonZero in slice:', nonZero, '/', width * height);
 
     return sliceData;
   }
@@ -401,12 +350,9 @@ class SliceExtractorImpl implements SliceExtractor {
   private getMaxSliceIndex(orientation: SliceOrientation): number {
     const { dimensions } = this.volume;
     switch (orientation) {
-      case 'axial':
-        return dimensions[2] - 1;
-      case 'coronal':
-        return dimensions[1] - 1;
-      case 'sagittal':
-        return dimensions[0] - 1;
+      case 'axial': return dimensions[2] - 1;
+      case 'coronal': return dimensions[1] - 1;
+      case 'sagittal': return dimensions[0] - 1;
     }
   }
 
@@ -415,7 +361,7 @@ class SliceExtractorImpl implements SliceExtractor {
   }
 
   renderToCanvas(
-    canvas: HTMLCanvasElement,
+    _canvas: HTMLCanvasElement,
     orientation: SliceOrientation,
     sliceIndex: number
   ): void {
@@ -438,12 +384,22 @@ class SliceExtractorImpl implements SliceExtractor {
         break;
     }
 
-    console.log('[SliceExtractor] renderToCanvas:', orientation, 'slice', sliceIndex, 'canvas size', canvas.width, 'x', canvas.height, 'volume slice', width, 'x', height);
+    // Bind this.gl's framebuffer to null (default framebuffer)
+    // But we need to render to the canvas that was passed in
+    // The issue is that this.gl belongs to a different canvas
+    // So we need to copy the result
 
-    // Keep canvas size matching container, use viewport to control render area
-    gl.viewport(0, 0, canvas.width, canvas.height);
+    // Actually, we render to the internal canvas, then copy
+    gl.viewport(0, 0, width, height);
+
+    // Clear with red to see if rendering happens at all
+    gl.clearColor(0.2, 0.0, 0.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
 
     const slice = this.extractSlice(orientation, sliceIndex);
+
+    // Debug: check slice data
+    console.log('[renderToCanvas] slice:', orientation, sliceIndex, 'size:', width, 'x', height);
 
     gl.useProgram(this.program);
 
@@ -461,10 +417,95 @@ class SliceExtractorImpl implements SliceExtractor {
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-    const error = gl.getError();
-    if (error !== gl.NO_ERROR) {
-      console.error('[SliceExtractor] WebGL error after draw:', error);
+    // Check for GL errors
+    const err = gl.getError();
+    if (err !== gl.NO_ERROR) {
+      console.error('[renderToCanvas] GL error:', err);
     }
+  }
+
+  // Render to a specific viewport in the provided GL context
+  renderToViewport(
+    gl: WebGL2RenderingContext,
+    orientation: SliceOrientation,
+    sliceIndex: number,
+    _width: number,
+    _height: number
+  ): void {
+    // Get the slice data (this creates texture in our internal GL context)
+    const slice = this.extractSlice(orientation, sliceIndex);
+
+    // Use our internal GL context for rendering
+    const internalGl = this.gl;
+
+    // First render to our internal canvas
+    const { dimensions } = this.volume;
+    let sliceW: number, sliceH: number;
+    switch (orientation) {
+      case 'axial':
+        sliceW = dimensions[0];
+        sliceH = dimensions[1];
+        break;
+      case 'coronal':
+        sliceW = dimensions[0];
+        sliceH = dimensions[2];
+        break;
+      case 'sagittal':
+        sliceW = dimensions[1];
+        sliceH = dimensions[2];
+        break;
+    }
+
+    // Render to internal canvas
+    internalGl.viewport(0, 0, sliceW, sliceH);
+    internalGl.clearColor(0.1, 0.1, 0.1, 1.0);
+    internalGl.clear(internalGl.COLOR_BUFFER_BIT);
+
+    internalGl.useProgram(this.program);
+    internalGl.uniform1i(this.uniforms.sliceTexture, 0);
+    internalGl.uniform1f(this.uniforms.windowWidth, this.windowLevel.window);
+    internalGl.uniform1f(this.uniforms.windowCenter, this.windowLevel.level);
+
+    internalGl.activeTexture(internalGl.TEXTURE0);
+    internalGl.bindTexture(internalGl.TEXTURE_2D, slice.texture);
+
+    const positionLocation = internalGl.getAttribLocation(this.program!, 'a_position');
+    internalGl.enableVertexAttribArray(positionLocation);
+    internalGl.bindBuffer(internalGl.ARRAY_BUFFER, this.positionBuffer);
+    internalGl.vertexAttribPointer(positionLocation, 2, internalGl.FLOAT, false, 0, 0);
+
+    internalGl.drawArrays(internalGl.TRIANGLE_STRIP, 0, 4);
+
+    // Now read pixels and draw to target context
+    // Note: This is inefficient but works for now
+    const pixels = new Uint8Array(sliceW * sliceH * 4);
+    internalGl.readPixels(0, 0, sliceW, sliceH, internalGl.RGBA, internalGl.UNSIGNED_BYTE, pixels);
+
+    // Flip the image (WebGL has origin at bottom-left)
+    const flippedPixels = new Uint8Array(sliceW * sliceH * 4);
+    for (let y = 0; y < sliceH; y++) {
+      for (let x = 0; x < sliceW; x++) {
+        const srcIdx = (y * sliceW + x) * 4;
+        const dstIdx = ((sliceH - 1 - y) * sliceW + x) * 4;
+        flippedPixels[dstIdx] = pixels[srcIdx];
+        flippedPixels[dstIdx + 1] = pixels[srcIdx + 1];
+        flippedPixels[dstIdx + 2] = pixels[srcIdx + 2];
+        flippedPixels[dstIdx + 3] = pixels[srcIdx + 3];
+      }
+    }
+
+    // Create a texture in the target GL context and upload
+    const targetTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, targetTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sliceW, sliceH, 0, gl.RGBA, gl.UNSIGNED_BYTE, flippedPixels);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    // We need a simple program to render a textured quad
+    // For now, clean up and return - we'll use a different approach
+    gl.deleteTexture(targetTexture);
   }
 
   dispose(): void {
@@ -474,10 +515,6 @@ class SliceExtractorImpl implements SliceExtractor {
       gl.deleteTexture(texture);
     }
     this.sliceTextures.clear();
-
-    if (this.volumeTexture) {
-      gl.deleteTexture(this.volumeTexture);
-    }
 
     if (this.positionBuffer) {
       gl.deleteBuffer(this.positionBuffer);
