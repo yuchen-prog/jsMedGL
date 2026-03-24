@@ -170,17 +170,22 @@ class SliceExtractorImpl implements SliceExtractor {
         }
       }
     } else if (orientation === 'coronal') {
+      // Coronal: texture row maps to Z (slice thickness).
+      // WebGL uploads row 0 to rendered bottom, so we reverse the Z index
+      // so that Z=d2-1 (Superior, top of head) appears at rendered top.
       width = d0;
       height = dimensions[2];
       sliceData = new Uint8Array(width * height);
       for (let z = 0; z < height; z++) {
+        const rz = height - 1 - z; // reversed Z: 0→bottom, height-1→top
         for (let x = 0; x < width; x++) {
-          const linearIdx = x + sliceIndex * d0 + z * d0 * d1;
+          const linearIdx = x + sliceIndex * d0 + rz * d0 * d1;
           sliceData[z * width + x] = this.normalizedData[linearIdx];
         }
       }
     } else {
       // sagittal
+      // texture Y → Z (slice thickness), texture X → J
       width = d1;
       height = dimensions[2];
       sliceData = new Uint8Array(width * height);
