@@ -185,13 +185,15 @@ class SliceExtractorImpl implements SliceExtractor {
       }
     } else {
       // sagittal
-      // texture Y → Z (slice thickness), texture X → J
+      // texture X → J (Left/Right), texture Y → K (Superior/Inferior)
+      // Reverse K so Superior (K=d2-1) appears at rendered top.
       width = d1;
       height = dimensions[2];
       sliceData = new Uint8Array(width * height);
       for (let z = 0; z < height; z++) {
+        const rz = height - 1 - z; // reversed K: 0→bottom, height-1→top
         for (let y = 0; y < width; y++) {
-          const linearIdx = sliceIndex + y * d0 + z * d0 * d1;
+          const linearIdx = sliceIndex + y * d0 + rz * d0 * d1;
           sliceData[z * width + y] = this.normalizedData[linearIdx];
         }
       }
