@@ -1,5 +1,6 @@
-// WebGL Slice View - Slice rendering with window/level support
+// WebGL Slice View - Pure WebGL-based slice rendering
 
+import { createSliceExtractor, type SliceExtractor } from './slice-extractor';
 import type { SliceOrientation, WindowLevel, OrientationLabels } from './types';
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
 
@@ -28,7 +29,8 @@ export function createWebGLSliceView(
 class WebGLSliceViewImpl implements WebGLSliceView {
   private container: HTMLElement;
   private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
+  private gl: WebGL2RenderingContext;
+  private extractor: SliceExtractor;
   private orientation: SliceOrientation;
   private sliceIndex: number = 0;
   private volume: NiftiVolume;
@@ -36,8 +38,12 @@ class WebGLSliceViewImpl implements WebGLSliceView {
   private labelsElement: HTMLElement | null = null;
   private listeners: Map<string, Set<(data: any) => void>> = new Map();
 
-  // Normalized volume data (all types converted to Uint8)
-  private normalizedData: Uint8Array;
+  // Display program for rendering textured quad to screen
+  private displayProgram: WebGLProgram | null = null;
+  private displayBuffer: WebGLBuffer | null = null;
+  private displayUniforms: {
+    u_texture: WebGLUniformLocation | null;
+  } = { u_texture: null };
 
   constructor(volume: NiftiVolume, options: WebGLSliceViewOptions) {
     this.volume = volume;
@@ -45,7 +51,7 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     this.orientation = options.orientation || 'axial';
     this.sliceIndex = options.initialSliceIndex || 0;
 
-    // Create visible display canvas
+    // Create WebGL canvas - this is the ONLY canvas we use
     this.canvas = document.createElement('canvas');
     this.canvas.style.position = 'absolute';
     this.canvas.style.top = '0';
@@ -53,16 +59,23 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     this.canvas.style.width = '100%';
     this.canvas.style.height = '100%';
 
-    const ctx = this.canvas.getContext('2d');
-    if (!ctx) throw new Error('Failed to get 2D context');
-    this.ctx = ctx;
+    // Get WebGL2 context
+    const gl = this.canvas.getContext('webgl2', {
+      preserveDrawingBuffer: true,
+      premultipliedAlpha: false
+    });
+    if (!gl) throw new Error('WebGL2 not supported');
+    this.gl = gl;
 
-    // Pre-normalize volume data
-    this.normalizedData = new Uint8Array(0);
-    this.normalizeVolumeData();
+    // Initialize slice extractor with OUR WebGL context
+    this.extractor = createSliceExtractor(gl, volume);
+    this.extractor.setWindowLevel(options.initialWindowLevel || { window: 255, level: 128 });
 
     // Find first slice with data
     this.sliceIndex = this.findFirstSliceWithData();
+
+    // Initialize display shader
+    this.initDisplayShader();
 
     this.setupDOM();
     this.setupEventHandlers();
@@ -71,68 +84,82 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     requestAnimationFrame(() => this.render());
   }
 
-  private normalizeVolumeData(): void {
-    const { data, header } = this.volume;
-    const datatype = header.datatype;
-    const byteSize = this.getDataTypeSize(datatype);
-    const numVoxels = data.byteLength / byteSize;
+  private initDisplayShader(): void {
+    const gl = this.gl;
 
-    // Find min/max
-    let vMin = Infinity, vMax = -Infinity;
-    const step = Math.max(1, Math.floor(numVoxels / 10000));
-    for (let i = 0; i < numVoxels; i += step) {
-      const v = this.readVoxel(data, datatype, i * byteSize);
-      if (v < vMin) vMin = v;
-      if (v > vMax) vMax = v;
-    }
-    const range = vMax - vMin;
+    const vertexShaderSource = `
+      attribute vec2 a_position;
+      varying vec2 v_texCoord;
+      void main() {
+        v_texCoord = a_position * 0.5 + 0.5;
+        gl_Position = vec4(a_position, 0.0, 1.0);
+      }
+    `;
 
-    // Normalize all data to Uint8Array
-    this.normalizedData = new Uint8Array(numVoxels);
-    for (let i = 0; i < numVoxels; i++) {
-      const v = this.readVoxel(data, datatype, i * byteSize);
-      let normalized = range > 0 ? Math.round(((v - vMin) / range) * 255) : (v > 0 ? 255 : 0);
-      this.normalizedData[i] = Math.max(0, Math.min(255, normalized));
+    const fragmentShaderSource = `
+      precision mediump float;
+      uniform sampler2D u_texture;
+      varying vec2 v_texCoord;
+      void main() {
+        // Flip Y coordinate because WebGL texture Y is inverted
+        vec2 texCoord = vec2(v_texCoord.x, 1.0 - v_texCoord.y);
+        // Texture is R8 format (luminance in red channel), convert to grayscale
+        float luminance = texture2D(u_texture, texCoord).r;
+        gl_FragColor = vec4(luminance, luminance, luminance, 1.0);
+      }
+    `;
+
+    // Create and compile vertex shader with error checking
+    const vertexShader = gl.createShader(gl.VERTEX_SHADER)!;
+    gl.shaderSource(vertexShader, vertexShaderSource);
+    gl.compileShader(vertexShader);
+    if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+      const error = gl.getShaderInfoLog(vertexShader);
+      gl.deleteShader(vertexShader);
+      throw new Error('Vertex shader compilation error: ' + error);
     }
+
+    // Create and compile fragment shader with error checking
+    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER)!;
+    gl.shaderSource(fragmentShader, fragmentShaderSource);
+    gl.compileShader(fragmentShader);
+    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+      const error = gl.getShaderInfoLog(fragmentShader);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      throw new Error('Fragment shader compilation error: ' + error);
+    }
+
+    this.displayProgram = gl.createProgram()!;
+    gl.attachShader(this.displayProgram, vertexShader);
+    gl.attachShader(this.displayProgram, fragmentShader);
+    gl.linkProgram(this.displayProgram);
+
+    if (!gl.getProgramParameter(this.displayProgram, gl.LINK_STATUS)) {
+      const error = gl.getProgramInfoLog(this.displayProgram);
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      gl.deleteProgram(this.displayProgram);
+      this.displayProgram = null;
+      throw new Error('Display shader link error: ' + error);
+    }
+
+    this.displayUniforms.u_texture = gl.getUniformLocation(this.displayProgram, 'u_texture');
+
+    // Create fullscreen quad buffer
+    this.displayBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.displayBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1,  1, -1,  -1, 1,  1, 1
+    ]), gl.STATIC_DRAW);
+
+    gl.deleteShader(vertexShader);
+    gl.deleteShader(fragmentShader);
   }
 
   private findFirstSliceWithData(): number {
-    const dims = this.volume.dimensions;
-    const sliceSize = dims[0] * dims[1];
-    const totalSlices = dims[2];
-
-    for (let z = 0; z < totalSlices; z++) {
-      const offset = z * sliceSize;
-      for (let i = 0; i < sliceSize; i++) {
-        if (this.normalizedData[offset + i] > 0) {
-          return z;
-        }
-      }
-    }
-    return 0;
-  }
-
-  private getDataTypeSize(datatype: number): number {
-    const sizes: Record<number, number> = {
-      2: 1, 4: 2, 8: 4, 16: 4, 64: 8,
-      256: 1, 512: 2, 768: 4, 1024: 8, 1280: 8
-    };
-    return sizes[datatype] || 1;
-  }
-
-  private readVoxel(data: ArrayBuffer, datatype: number, byteOffset: number): number {
-    const view = new DataView(data, byteOffset);
-    switch (datatype) {
-      case 2:   return view.getUint8(0);
-      case 4:   return view.getInt16(0, true);
-      case 8:   return view.getInt32(0, true);
-      case 16:  return view.getFloat32(0, true);
-      case 64:  return view.getFloat64(0, true);
-      case 256: return view.getInt8(0);
-      case 512: return view.getUint16(0, true);
-      case 768: return view.getUint32(0, true);
-      default:  return view.getUint8(0);
-    }
+    // Use extractor to find the first slice with actual data
+    return this.extractor.findFirstSliceWithData(this.orientation);
   }
 
   private setupDOM(): void {
@@ -168,7 +195,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
   }
 
   private setupEventHandlers(): void {
-    // Mouse wheel for slice navigation
     this.canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.setSliceIndex(this.sliceIndex + (e.deltaY > 0 ? 1 : -1));
@@ -194,66 +220,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     }
   }
 
-  private extractSliceData(): { data: Uint8ClampedArray; width: number; height: number } {
-    const { dimensions } = this.volume;
-    const d0 = dimensions[0], d1 = dimensions[1];
-
-    let sliceW: number, sliceH: number;
-    let pixels: Uint8ClampedArray;
-
-    // Simple direct mapping - normalizedData is already 0-255
-    if (this.orientation === 'axial') {
-      sliceW = d0;
-      sliceH = d1;
-      pixels = new Uint8ClampedArray(sliceW * sliceH * 4);
-      const offset = this.sliceIndex * sliceW * sliceH;
-      for (let y = 0; y < sliceH; y++) {
-        for (let x = 0; x < sliceW; x++) {
-          const idx = offset + y * sliceW + x;
-          const v = this.normalizedData[idx];
-          const pi = (y * sliceW + x) * 4;
-          pixels[pi] = v;
-          pixels[pi + 1] = v;
-          pixels[pi + 2] = v;
-          pixels[pi + 3] = 255;
-        }
-      }
-    } else if (this.orientation === 'coronal') {
-      sliceW = d0;
-      sliceH = dimensions[2];
-      pixels = new Uint8ClampedArray(sliceW * sliceH * 4);
-      for (let z = 0; z < sliceH; z++) {
-        for (let x = 0; x < sliceW; x++) {
-          const linearIdx = x + this.sliceIndex * d0 + z * d0 * d1;
-          const v = this.normalizedData[linearIdx];
-          const pi = (z * sliceW + x) * 4;
-          pixels[pi] = v;
-          pixels[pi + 1] = v;
-          pixels[pi + 2] = v;
-          pixels[pi + 3] = 255;
-        }
-      }
-    } else {
-      // sagittal
-      sliceW = d1;
-      sliceH = dimensions[2];
-      pixels = new Uint8ClampedArray(sliceW * sliceH * 4);
-      for (let z = 0; z < sliceH; z++) {
-        for (let y = 0; y < sliceW; y++) {
-          const linearIdx = this.sliceIndex + y * d0 + z * d0 * d1;
-          const v = this.normalizedData[linearIdx];
-          const pi = (z * sliceW + y) * 4;
-          pixels[pi] = v;
-          pixels[pi + 1] = v;
-          pixels[pi + 2] = v;
-          pixels[pi + 3] = 255;
-        }
-      }
-    }
-
-    return { data: pixels, width: sliceW, height: sliceH };
-  }
-
   render(): void {
     const containerW = this.container.offsetWidth;
     const containerH = this.container.offsetHeight;
@@ -263,33 +229,67 @@ class WebGLSliceViewImpl implements WebGLSliceView {
       return;
     }
 
-    const { width: sliceW, height: sliceH, data: pixels } = this.extractSliceData();
-
-    // Update display canvas size
+    // Update canvas size if needed
     if (this.canvas.width !== containerW || this.canvas.height !== containerH) {
       this.canvas.width = containerW;
       this.canvas.height = containerH;
     }
 
-    // Clear display
-    this.ctx.fillStyle = '#000';
-    this.ctx.fillRect(0, 0, containerW, containerH);
+    const gl = this.gl;
+    const { dimensions } = this.volume;
 
-    // Calculate scaled drawing area
+    // Get slice dimensions
+    let sliceW: number, sliceH: number;
+    switch (this.orientation) {
+      case 'axial':
+        sliceW = dimensions[0];
+        sliceH = dimensions[1];
+        break;
+      case 'coronal':
+        sliceW = dimensions[0];
+        sliceH = dimensions[2];
+        break;
+      case 'sagittal':
+        sliceW = dimensions[1];
+        sliceH = dimensions[2];
+        break;
+    }
+
+    // Calculate display area (centered, aspect ratio preserved)
     const scale = Math.min(containerW / sliceW, containerH / sliceH);
-    const drawW = sliceW * scale;
-    const drawH = sliceH * scale;
-    const drawX = (containerW - drawW) / 2;
-    const drawY = (containerH - drawH) / 2;
+    const drawW = Math.floor(sliceW * scale);
+    const drawH = Math.floor(sliceH * scale);
+    const drawX = Math.floor((containerW - drawW) / 2);
+    const drawY = Math.floor((containerH - drawH) / 2);
 
-    // Create ImageData and draw
-    const imageData = new ImageData(sliceW, sliceH);
-    imageData.data.set(pixels);
+    // Clear entire canvas to black
+    gl.viewport(0, 0, containerW, containerH);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
 
-    const offscreen = new OffscreenCanvas(sliceW, sliceH);
-    const offCtx = offscreen.getContext('2d')!;
-    offCtx.putImageData(imageData, 0, 0);
-    this.ctx.drawImage(offscreen, drawX, drawY, drawW, drawH);
+    // Get the slice texture from extractor
+    const slice = this.extractor.extractSlice(this.orientation, this.sliceIndex);
+
+    // Render to the display area only
+    gl.viewport(drawX, drawY, drawW, drawH);
+    gl.scissor(drawX, drawY, drawW, drawH);
+    gl.enable(gl.SCISSOR_TEST);
+
+    // Use display program to render the slice texture
+    gl.useProgram(this.displayProgram);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, slice.texture);
+    gl.uniform1i(this.displayUniforms.u_texture, 0);
+
+    const posLoc = gl.getAttribLocation(this.displayProgram!, 'a_position');
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.displayBuffer);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    gl.disable(gl.SCISSOR_TEST);
   }
 
   setSliceIndex(index: number): void {
@@ -305,8 +305,8 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     return this.sliceIndex;
   }
 
-  setWindowLevel(_window: number, _level: number): void {
-    // Window/Level not implemented in this simplified version
+  setWindowLevel(window: number, level: number): void {
+    this.extractor.setWindowLevel({ window, level });
     this.render();
   }
 
@@ -333,6 +333,15 @@ class WebGLSliceViewImpl implements WebGLSliceView {
   }
 
   dispose(): void {
+    this.extractor.dispose();
+
+    if (this.displayProgram) {
+      this.gl.deleteProgram(this.displayProgram);
+    }
+    if (this.displayBuffer) {
+      this.gl.deleteBuffer(this.displayBuffer);
+    }
+
     this.listeners.clear();
     this.container.innerHTML = '';
   }

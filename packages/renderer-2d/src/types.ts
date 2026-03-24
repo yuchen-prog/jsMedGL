@@ -124,10 +124,7 @@ export interface SliceExtractor {
   extractSagittal(sliceIndex: number): ExtractedSlice;
   extractSlice(orientation: SliceOrientation, sliceIndex: number): ExtractedSlice;
   setWindowLevel(windowLevel: WindowLevel): void;
-  renderToCanvas(
-    canvas: HTMLCanvasElement,
-    orientation: SliceOrientation,
-    sliceIndex: number
-  ): void;
+  hasData(orientation: SliceOrientation, sliceIndex: number): boolean;
+  findFirstSliceWithData(orientation: SliceOrientation): number;
   dispose(): void;
 }

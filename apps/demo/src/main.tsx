@@ -1,8 +1,8 @@
-// jsMedgl Demo - NIfTI Viewer with Canvas 2D Rendering
+// jsMedgl Demo - NIfTI Viewer with WebGL Rendering
 import { parseNifti } from '@jsmedgl/parser-nifti';
-import { createSliceView, type SliceView } from '@jsmedgl/renderer-2d';
+import { createWebGLSliceView, type WebGLSliceView } from '@jsmedgl/renderer-2d';
 
-let sliceView: SliceView | null = null;
+let sliceView: WebGLSliceView | null = null;
 let loadedVolume: any = null;
 
 async function loadFile(file: File) {
@@ -24,11 +24,9 @@ function initViewer(volume: any) {
     sliceView.dispose();
   }
 
-  sliceView = createSliceView(volume, {
+  sliceView = createWebGLSliceView(volume, {
     container,
     orientation: 'axial',
-    enableCrosshair: true,
-    enableOrientationLabels: true,
   });
 
   // Update sidebar info
@@ -47,7 +45,7 @@ function initApp() {
   root.innerHTML = `
     <div class="app">
       <div class="header">
-        <span class="title">jsMed (Canvas 2D)</span>
+        <span class="title">jsMed (WebGL)</span>
         <span class="version">v0.1.0</span>
       </div>
       <div class="body">
