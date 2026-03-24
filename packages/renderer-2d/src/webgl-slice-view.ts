@@ -43,7 +43,12 @@ class WebGLSliceViewImpl implements WebGLSliceView {
   private displayBuffer: WebGLBuffer | null = null;
   private displayUniforms: {
     u_texture: WebGLUniformLocation | null;
-  } = { u_texture: null };
+    u_windowWidth: WebGLUniformLocation | null;
+    u_windowCenter: WebGLUniformLocation | null;
+  } = { u_texture: null, u_windowWidth: null, u_windowCenter: null };
+
+  // Current window/level settings
+  private windowLevel: WindowLevel = { window: 255, level: 128 };
 
   constructor(volume: NiftiVolume, options: WebGLSliceViewOptions) {
     this.volume = volume;
@@ -69,7 +74,9 @@ class WebGLSliceViewImpl implements WebGLSliceView {
 
     // Initialize slice extractor with OUR WebGL context
     this.extractor = createSliceExtractor(gl, volume);
-    this.extractor.setWindowLevel(options.initialWindowLevel || { window: 255, level: 128 });
+
+    // Store initial window/level
+    this.windowLevel = options.initialWindowLevel || { window: 255, level: 128 };
 
     // Find first slice with data
     this.sliceIndex = this.findFirstSliceWithData();
@@ -99,13 +106,22 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     const fragmentShaderSource = `
       precision mediump float;
       uniform sampler2D u_texture;
+      uniform float u_windowWidth;
+      uniform float u_windowCenter;
       varying vec2 v_texCoord;
       void main() {
         // Flip Y coordinate because WebGL texture Y is inverted
         vec2 texCoord = vec2(v_texCoord.x, 1.0 - v_texCoord.y);
-        // Texture is R8 format (luminance in red channel), convert to grayscale
-        float luminance = texture2D(u_texture, texCoord).r;
-        gl_FragColor = vec4(luminance, luminance, luminance, 1.0);
+        // Texture is R8 format (luminance in red channel), normalized to 0-255 range
+        float intensity = texture2D(u_texture, texCoord).r * 255.0;
+
+        // Apply window/level transformation
+        float minValue = u_windowCenter - u_windowWidth / 2.0;
+        float maxValue = u_windowCenter + u_windowWidth / 2.0;
+        float normalized = (intensity - minValue) / (maxValue - minValue);
+        normalized = clamp(normalized, 0.0, 1.0);
+
+        gl_FragColor = vec4(normalized, normalized, normalized, 1.0);
       }
     `;
 
@@ -145,6 +161,8 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     }
 
     this.displayUniforms.u_texture = gl.getUniformLocation(this.displayProgram, 'u_texture');
+    this.displayUniforms.u_windowWidth = gl.getUniformLocation(this.displayProgram, 'u_windowWidth');
+    this.displayUniforms.u_windowCenter = gl.getUniformLocation(this.displayProgram, 'u_windowCenter');
 
     // Create fullscreen quad buffer
     this.displayBuffer = gl.createBuffer();
@@ -281,6 +299,8 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, slice.texture);
     gl.uniform1i(this.displayUniforms.u_texture, 0);
+    gl.uniform1f(this.displayUniforms.u_windowWidth, this.windowLevel.window);
+    gl.uniform1f(this.displayUniforms.u_windowCenter, this.windowLevel.level);
 
     const posLoc = gl.getAttribLocation(this.displayProgram!, 'a_position');
     gl.enableVertexAttribArray(posLoc);
@@ -306,7 +326,7 @@ class WebGLSliceViewImpl implements WebGLSliceView {
   }
 
   setWindowLevel(window: number, level: number): void {
-    this.extractor.setWindowLevel({ window, level });
+    this.windowLevel = { window, level };
     this.render();
   }
 
