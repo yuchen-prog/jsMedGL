@@ -215,7 +215,6 @@
 
 .crosshair-line {
   position: absolute;
-  background: rgba(0, 255, 0, 0.7);
   pointer-events: none;
 }
 
@@ -237,7 +236,6 @@
   position: absolute;
   width: 6px;
   height: 6px;
-  background: rgba(0, 255, 0, 1);
   border-radius: 50%;
   transform: translate(-50%, -50%);
   pointer-events: none;

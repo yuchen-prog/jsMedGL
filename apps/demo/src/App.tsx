@@ -23,6 +23,23 @@ const WL_PRESETS: Array<{ label: string; window: number; level: number }> = [
   { label: 'Bone', window: 2000, level: 500 },
 ];
 
+// ─── Orientation Colors ──────────────────────────────────────────────────────
+
+const ORIENTATION_COLORS: Record<SliceOrientation, string> = {
+  axial: '#3b82f6',    // Blue
+  coronal: '#22c55e',  // Green
+  sagittal: '#f97316', // Orange
+};
+
+// Crosshair line colors based on which plane the axis represents
+// X-axis (horizontal) represents: Axial→Coronal, Coronal→Axial, Sagittal→Axial
+// Y-axis (vertical) represents: Axial→Sagittal, Coronal→Sagittal, Sagittal→Coronal
+const CROSSHAIR_COLORS: Record<SliceOrientation, { h: string; v: string }> = {
+  axial:    { h: ORIENTATION_COLORS.coronal,  v: ORIENTATION_COLORS.sagittal },
+  coronal:  { h: ORIENTATION_COLORS.axial,    v: ORIENTATION_COLORS.sagittal },
+  sagittal: { h: ORIENTATION_COLORS.axial,    v: ORIENTATION_COLORS.coronal },
+};
+
 // ─── Crosshair position → overlay pixel coords ────────────────────────────────
 
 /**
@@ -274,14 +291,20 @@ const SliceViewer = memo(function SliceViewer({
     onSliceChange(curr);
   }, [orientation, volume.dimensions, crosshair, onSliceChange]);
 
+  const colors = CROSSHAIR_COLORS[orientation];
+
   return (
-    <div ref={containerRef} className="slice-viewer">
+    <div
+      ref={containerRef}
+      className="slice-viewer"
+      style={{ border: `1px solid ${ORIENTATION_COLORS[orientation]}` }}
+    >
       <div ref={canvasWrapperRef} className="canvas-wrapper" />
       {enableCrosshair && (
         <div className="crosshair-overlay">
-          <div ref={hLineRef} className="crosshair-line crosshair-line--h" />
-          <div ref={vLineRef} className="crosshair-line crosshair-line--v" />
-          <div ref={dotRef} className="crosshair-dot" />
+          <div ref={hLineRef} className="crosshair-line crosshair-line--h" style={{ background: colors.h }} />
+          <div ref={vLineRef} className="crosshair-line crosshair-line--v" style={{ background: colors.v }} />
+          <div ref={dotRef} className="crosshair-dot" style={{ background: colors.v }} />
         </div>
       )}
       <OrientationLabels orientation={orientation} />
