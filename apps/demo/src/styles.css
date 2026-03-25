@@ -184,14 +184,103 @@
   background: #0a0a1a;
 }
 
-.viewer {
+/* ─── Slice Viewer ────────────────────────────────────────────────────── */
+.slice-viewer {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.canvas-wrapper {
+  position: absolute;
+  inset: 0;
+}
+
+.canvas-wrapper canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
 }
 
-.viewer--single {
-  width: 100%;
-  height: 100%;
+/* ─── Crosshair Overlay ─────────────────────────────────────────────────── */
+.crosshair-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.crosshair-line {
+  position: absolute;
+  background: rgba(0, 255, 0, 0.7);
+  pointer-events: none;
+}
+
+.crosshair-line--h {
+  height: 1px;
+  left: 0;
+  right: 0;
+  top: 50%;
+}
+
+.crosshair-line--v {
+  width: 1px;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+}
+
+.crosshair-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: rgba(0, 255, 0, 1);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* ─── Orientation Labels ─────────────────────────────────────────────────── */
+.orientation-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  color: white;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.orientation-label {
+  position: absolute;
+}
+
+.orientation-label--top {
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.orientation-label--bottom {
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.orientation-label--left {
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.orientation-label--right {
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 /* ─── MPR Layout ──────────────────────────────────────────────────────── */
@@ -221,11 +310,6 @@
   position: relative;
 }
 
-.mpr-view {
-  width: 100%;
-  height: 100%;
-}
-
 .mpr-label {
   position: absolute;
   top: 8px;
@@ -237,6 +321,16 @@
   border-radius: 4px;
   pointer-events: none;
   z-index: 30;
+}
+
+/* ─── Header coords ─────────────────────────────────────────────────────── */
+.header__coords {
+  font-size: 11px;
+  font-family: monospace;
+  color: #00d9ff;
+  background: rgba(0, 217, 255, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
 }
 
 /* ─── Drop Overlay ─────────────────────────────────────────────────────── */

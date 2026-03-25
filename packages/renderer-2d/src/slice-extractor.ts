@@ -160,40 +160,44 @@ class SliceExtractorImpl implements SliceExtractor {
     let sliceData: Uint8Array;
 
     if (orientation === 'axial') {
+      // Axial: texture X → I (Left-Right), texture Y → J (Anterior-Posterior)
+      // Reverse J so that:
+      // - texture row 0 → J=d1-1 (Anterior) → rendered at canvas TOP
+      // - texture row d1-1 → J=0 (Posterior) → rendered at canvas BOTTOM
+      // This makes A at top, P at bottom (radiology standard).
       width = d0;
       height = d1;
       sliceData = new Uint8Array(width * height);
-      const offset = sliceIndex * width * height;
       for (let y = 0; y < height; y++) {
+        const ry = height - 1 - y; // reversed J
         for (let x = 0; x < width; x++) {
-          sliceData[y * width + x] = this.normalizedData[offset + y * width + x];
+          const linearIdx = sliceIndex * d0 * d1 + ry * d0 + x;
+          sliceData[y * width + x] = this.normalizedData[linearIdx];
         }
       }
     } else if (orientation === 'coronal') {
-      // Coronal: texture row maps to Z (slice thickness).
-      // WebGL uploads row 0 to rendered bottom, so we reverse the Z index
-      // so that Z=d2-1 (Superior, top of head) appears at rendered top.
+      // Coronal: texture X → I (Left-Right), texture Y → K (Superior-Inferior)
+      // Texture row 0 renders at canvas TOP, so K=0 (Superior) at top, K=d2-1 (Inferior) at bottom.
       width = d0;
       height = dimensions[2];
       sliceData = new Uint8Array(width * height);
       for (let z = 0; z < height; z++) {
-        const rz = height - 1 - z; // reversed Z: 0→bottom, height-1→top
         for (let x = 0; x < width; x++) {
-          const linearIdx = x + sliceIndex * d0 + rz * d0 * d1;
+          const linearIdx = x + sliceIndex * d0 + z * d0 * d1;
           sliceData[z * width + x] = this.normalizedData[linearIdx];
         }
       }
     } else {
       // sagittal
-      // texture X → J (Left/Right), texture Y → K (Superior/Inferior)
-      // Reverse K so Superior (K=d2-1) appears at rendered top.
+      // texture X → J (Anterior-Posterior), texture Y → K (Superior-Inferior)
+      // No J reversal: Anterior on LEFT, Posterior on RIGHT.
+      // No K reversal: Superior (K=0) at canvas TOP, Inferior at canvas BOTTOM.
       width = d1;
       height = dimensions[2];
       sliceData = new Uint8Array(width * height);
       for (let z = 0; z < height; z++) {
-        const rz = height - 1 - z; // reversed K: 0→bottom, height-1→top
         for (let y = 0; y < width; y++) {
-          const linearIdx = sliceIndex + y * d0 + rz * d0 * d1;
+          const linearIdx = sliceIndex + y * d0 + z * d0 * d1;
           sliceData[z * width + y] = this.normalizedData[linearIdx];
         }
       }

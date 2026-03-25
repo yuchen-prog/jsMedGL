@@ -1,7 +1,8 @@
-// WebGL Slice View - Pure WebGL-based slice rendering
+// WebGL Slice View - Pure rendering engine. All interaction (mouse, wheel, crosshair)
+// is handled by the React layer. This module only manages WebGL rendering.
 
 import { createSliceExtractor, type SliceExtractor } from './slice-extractor';
-import type { SliceOrientation, WindowLevel, OrientationLabels } from './types';
+import type { SliceOrientation, WindowLevel, CrosshairPosition } from './types';
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
 
 export interface WebGLSliceViewOptions {
@@ -15,6 +16,14 @@ export interface WebGLSliceView {
   setSliceIndex(index: number): void;
   getSliceIndex(): number;
   setWindowLevel(window: number, level: number): void;
+  /** Get the display rect (image area within container) */
+  getDisplayRect(): { x: number; y: number; width: number; height: number };
+  /**
+   * Convert pixel coords (relative to container top-left) to volume IJK coords.
+   * Returns null if the point is outside the image area.
+   */
+  mouseToIJK(localX: number, localY: number): CrosshairPosition | null;
+  /** Trigger a render. Call after slice/windowLevel changes. */
   render(): void;
   dispose(): void;
 }
@@ -34,9 +43,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
   private orientation: SliceOrientation;
   private sliceIndex: number = 0;
   private volume: NiftiVolume;
-  private crosshairElement: HTMLElement | null = null;
-  private labelsElement: HTMLElement | null = null;
-  private listeners: Map<string, Set<(data: any) => void>> = new Map();
 
   // Display program for rendering textured quad to screen
   private displayProgram: WebGLProgram | null = null;
@@ -50,13 +56,16 @@ class WebGLSliceViewImpl implements WebGLSliceView {
   // Current window/level settings
   private windowLevel: WindowLevel = { window: 255, level: 128 };
 
+  // Cached display rect (updated on render)
+  private displayRect = { x: 0, y: 0, width: 0, height: 0 };
+
   constructor(volume: NiftiVolume, options: WebGLSliceViewOptions) {
     this.volume = volume;
     this.container = options.container;
     this.orientation = options.orientation || 'axial';
     this.sliceIndex = options.initialSliceIndex || 0;
 
-    // Create WebGL canvas - this is the ONLY canvas we use
+    // Create WebGL canvas
     this.canvas = document.createElement('canvas');
     this.canvas.style.position = 'absolute';
     this.canvas.style.top = '0';
@@ -72,20 +81,21 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     if (!gl) throw new Error('WebGL2 not supported');
     this.gl = gl;
 
-    // Initialize slice extractor with OUR WebGL context
+    // Initialize slice extractor
     this.extractor = createSliceExtractor(gl, volume);
 
     // Store initial window/level
     this.windowLevel = options.initialWindowLevel || { window: 255, level: 128 };
 
-    // Find first slice with data
-    this.sliceIndex = this.findFirstSliceWithData();
+    // Use provided initialSliceIndex if given, otherwise find first slice with data
+    if (options.initialSliceIndex !== undefined) {
+      this.sliceIndex = options.initialSliceIndex;
+    } else {
+      this.sliceIndex = this.findFirstSliceWithData();
+    }
 
-    // Initialize display shader
     this.initDisplayShader();
-
     this.setupDOM();
-    this.setupEventHandlers();
 
     // Delay first render to ensure container has proper size
     requestAnimationFrame(() => this.render());
@@ -110,12 +120,8 @@ class WebGLSliceViewImpl implements WebGLSliceView {
       uniform float u_windowCenter;
       varying vec2 v_texCoord;
       void main() {
-        // Flip Y coordinate because WebGL texture Y is inverted
-        vec2 texCoord = vec2(v_texCoord.x, 1.0 - v_texCoord.y);
-        // Texture is R8 format (luminance in red channel), normalized to 0-255 range
-        float intensity = texture2D(u_texture, texCoord).r * 255.0;
+        float intensity = texture2D(u_texture, v_texCoord).r * 255.0;
 
-        // Apply window/level transformation
         float minValue = u_windowCenter - u_windowWidth / 2.0;
         float maxValue = u_windowCenter + u_windowWidth / 2.0;
         float normalized = (intensity - minValue) / (maxValue - minValue);
@@ -125,7 +131,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
       }
     `;
 
-    // Create and compile vertex shader with error checking
     const vertexShader = gl.createShader(gl.VERTEX_SHADER)!;
     gl.shaderSource(vertexShader, vertexShaderSource);
     gl.compileShader(vertexShader);
@@ -135,7 +140,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
       throw new Error('Vertex shader compilation error: ' + error);
     }
 
-    // Create and compile fragment shader with error checking
     const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER)!;
     gl.shaderSource(fragmentShader, fragmentShaderSource);
     gl.compileShader(fragmentShader);
@@ -164,7 +168,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     this.displayUniforms.u_windowWidth = gl.getUniformLocation(this.displayProgram, 'u_windowWidth');
     this.displayUniforms.u_windowCenter = gl.getUniformLocation(this.displayProgram, 'u_windowCenter');
 
-    // Create fullscreen quad buffer
     this.displayBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.displayBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
@@ -176,66 +179,76 @@ class WebGLSliceViewImpl implements WebGLSliceView {
   }
 
   private findFirstSliceWithData(): number {
-    // Use extractor to find the first slice with actual data
     return this.extractor.findFirstSliceWithData(this.orientation);
   }
 
   private setupDOM(): void {
-    this.container.innerHTML = '';
-    this.container.style.position = 'relative';
-    this.container.style.backgroundColor = '#000';
-    this.container.style.overflow = 'hidden';
-
+    // Don't clear innerHTML — the container may contain React-rendered overlays
+    // (e.g. crosshair elements) that we must preserve.
+    // Note: position, backgroundColor, overflow are set via CSS classes.
     this.container.appendChild(this.canvas);
-
-    // Crosshair overlay
-    this.crosshairElement = document.createElement('div');
-    this.crosshairElement.style.cssText = `
-      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-      pointer-events: none; z-index: 10;
-    `;
-    this.crosshairElement.innerHTML = `
-      <div style="position:absolute;height:1px;background:rgba(0,255,0,0.7);left:0;right:0;top:50%;"></div>
-      <div style="position:absolute;width:1px;background:rgba(0,255,0,0.7);top:0;bottom:0;left:50%;"></div>
-    `;
-    this.container.appendChild(this.crosshairElement);
-
-    // Orientation labels
-    this.labelsElement = document.createElement('div');
-    this.labelsElement.style.cssText = `
-      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-      pointer-events: none; z-index: 20;
-      font-family: Arial; font-size: 14px; color: white;
-      text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-    `;
-    this.updateLabels();
-    this.container.appendChild(this.labelsElement);
   }
 
-  private setupEventHandlers(): void {
-    this.canvas.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      this.setSliceIndex(this.sliceIndex + (e.deltaY > 0 ? 1 : -1));
-    });
+  /** Get the display rect (image area within container, centered, aspect preserved) */
+  getDisplayRect(): { x: number; y: number; width: number; height: number } {
+    return { ...this.displayRect };
   }
 
-  private updateLabels(): void {
-    if (!this.labelsElement) return;
-    const labels = this.getOrientationLabels();
-    this.labelsElement.innerHTML = `
-      <div style="position:absolute;top:8px;left:50%;transform:translateX(-50%);">${labels.top}</div>
-      <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);">${labels.bottom}</div>
-      <div style="position:absolute;left:8px;top:50%;transform:translateY(-50%);">${labels.left}</div>
-      <div style="position:absolute;right:8px;top:50%;transform:translateY(-50%);">${labels.right}</div>
-    `;
-  }
+  /**
+   * Convert pixel coords (relative to container top-left) to volume IJK coords.
+   * Returns null if the point is outside the image area.
+   */
+  mouseToIJK(localX: number, localY: number): CrosshairPosition | null {
+    const { x, y, width, height } = this.displayRect;
+    const { dimensions } = this.volume;
 
-  private getOrientationLabels(): OrientationLabels {
-    switch (this.orientation) {
-      case 'axial': return { top: 'A', bottom: 'P', left: 'L', right: 'R' };
-      case 'coronal': return { top: 'S', bottom: 'I', left: 'L', right: 'R' };
-      case 'sagittal': return { top: 'S', bottom: 'I', left: 'A', right: 'P' };
+    if (localX < x || localX > x + width || localY < y || localY > y + height) {
+      return null;
     }
+
+    const nx = (localX - x) / width;
+    // Shader Y-flip: texture row 0 renders at canvas TOP
+    const ny = (localY - y) / height;
+
+    let sliceW: number, sliceH: number;
+    switch (this.orientation) {
+      case 'axial':
+        sliceW = dimensions[0];
+        sliceH = dimensions[1];
+        break;
+      case 'coronal':
+        sliceW = dimensions[0];
+        sliceH = dimensions[2];
+        break;
+      case 'sagittal':
+        sliceW = dimensions[1];
+        sliceH = dimensions[2];
+        break;
+    }
+
+    const px = Math.floor(nx * sliceW);
+    const py = Math.floor(ny * sliceH);
+
+    let i: number, j: number, k: number;
+    switch (this.orientation) {
+      case 'axial':
+        i = Math.min(px, dimensions[0] - 1);
+        j = Math.min(py, dimensions[1] - 1);
+        k = this.sliceIndex;
+        break;
+      case 'coronal':
+        i = Math.min(px, dimensions[0] - 1);
+        j = this.sliceIndex;
+        k = Math.min(py, dimensions[2] - 1);
+        break;
+      case 'sagittal':
+        i = this.sliceIndex;
+        j = Math.min(px, dimensions[1] - 1);
+        k = Math.min(py, dimensions[2] - 1);
+        break;
+    }
+
+    return { i, j, k };
   }
 
   render(): void {
@@ -247,7 +260,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
       return;
     }
 
-    // Update canvas size if needed
     if (this.canvas.width !== containerW || this.canvas.height !== containerH) {
       this.canvas.width = containerW;
       this.canvas.height = containerH;
@@ -256,7 +268,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     const gl = this.gl;
     const { dimensions } = this.volume;
 
-    // Get slice dimensions
     let sliceW: number, sliceH: number;
     switch (this.orientation) {
       case 'axial':
@@ -280,6 +291,9 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     const drawX = Math.floor((containerW - drawW) / 2);
     const drawY = Math.floor((containerH - drawH) / 2);
 
+    // Cache display rect for coordinate transforms
+    this.displayRect = { x: drawX, y: drawY, width: drawW, height: drawH };
+
     // Clear entire canvas to black
     gl.viewport(0, 0, containerW, containerH);
     gl.clearColor(0, 0, 0, 1);
@@ -293,7 +307,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     gl.scissor(drawX, drawY, drawW, drawH);
     gl.enable(gl.SCISSOR_TEST);
 
-    // Use display program to render the slice texture
     gl.useProgram(this.displayProgram);
 
     gl.activeTexture(gl.TEXTURE0);
@@ -318,7 +331,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     if (index === this.sliceIndex) return;
     this.sliceIndex = index;
     this.render();
-    this.emit('sliceChange', { orientation: this.orientation, index: this.sliceIndex });
   }
 
   getSliceIndex(): number {
@@ -339,19 +351,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     }
   }
 
-  on(event: string, callback: (data: any) => void): void {
-    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
-    this.listeners.get(event)!.add(callback);
-  }
-
-  off(event: string, callback: (data: any) => void): void {
-    this.listeners.get(event)?.delete(callback);
-  }
-
-  private emit(event: string, data?: any): void {
-    this.listeners.get(event)?.forEach(cb => cb(data));
-  }
-
   dispose(): void {
     this.extractor.dispose();
 
@@ -361,8 +360,5 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     if (this.displayBuffer) {
       this.gl.deleteBuffer(this.displayBuffer);
     }
-
-    this.listeners.clear();
-    this.container.innerHTML = '';
   }
 }
