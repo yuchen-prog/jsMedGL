@@ -115,20 +115,23 @@ export function createNiftiParser(options?: NiftiParserOptions) {
  */
 function parseNiftiHeaderFromBuffer(buffer: ArrayBuffer, options?: NiftiParserOptions): NiftiHeader {
   const view = new DataView(buffer);
-  
-  // Check sizeof_hdr to determine version
-  const sizeofHdr = view.getInt32(0, true);
-  
+
+  // NIfTI-1 stores sizeof_hdr at offset 0; NIfTI-2 stores it at offset 4.
+  // Try offset 0 first (NIfTI-1), fall back to offset 4 (NIfTI-2).
+  const sizeofHdrAt0 = view.getInt32(0, true);
   let header: NiftiHeader;
 
-  if (sizeofHdr === 348) {
+  if (sizeofHdrAt0 === 348) {
     // NIfTI-1
     header = parseNifti1Header(buffer);
-  } else if (sizeofHdr === 540 || buffer.byteLength >= 540) {
-    // NIfTI-2
-    header = parseNifti2Header(buffer);
   } else {
-    throw new Error(`Unknown NIfTI format. Expected sizeof_hdr to be 348 or 540, got ${sizeofHdr}`);
+    // Could be NIfTI-2 (sizeof_hdr at offset 4) or invalid
+    const sizeofHdrAt4 = view.getInt32(4, true);
+    if (sizeofHdrAt4 === 540) {
+      header = parseNifti2Header(buffer);
+    } else {
+      throw new Error(`Unknown NIfTI format. Expected sizeof_hdr to be 348 or 540, got sizeof_hdr@0=${sizeofHdrAt0}, sizeof_hdr@4=${sizeofHdrAt4}`);
+    }
   }
 
   // Validate header in strict mode
@@ -156,6 +159,12 @@ function extractImageData(buffer: ArrayBuffer, header: NiftiHeader): ArrayBuffer
 
   // Extract data portion
   const dataStart = voxOffset || header.sizeof_hdr;
+
+  // R-03: Guard against underflow and truncation — reject invalid data sizes
+  if (dataSize <= 0) {
+    throw new Error(`Invalid data size: ${dataSize} for ${numVoxels} voxels (datatype=${header.datatype}, byteSize=${dataTypeSize})`);
+  }
+
   const dataEnd = dataStart + dataSize;
 
   if (dataEnd > buffer.byteLength) {

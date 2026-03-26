@@ -2,9 +2,6 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  identityMatrix,
-  multiplyMatrix,
-  transposeMatrix,
   invertMatrix,
   swapEndianness,
   isLittleEndian,
@@ -13,145 +10,30 @@ import {
   getDataTypeSize
 } from '@jsmedgl/parser-nifti/utils';
 
+// Helper: create a 4x4 identity matrix for test assertions
+function identityMatrix(): number[] {
+  return [
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1
+  ];
+}
+
+// Helper: multiply two 4x4 matrices for test assertions
+function multiplyMatrix(a: number[], b: number[]): number[] {
+  const result = new Array(16).fill(0);
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      for (let k = 0; k < 4; k++) {
+        result[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j];
+      }
+    }
+  }
+  return result;
+}
+
 describe('Matrix Operations', () => {
-  describe('identityMatrix', () => {
-    it('should create 4x4 identity matrix', () => {
-      const matrix = identityMatrix();
-
-      expect(matrix).toHaveLength(16);
-      expect(matrix[0]).toBe(1);
-      expect(matrix[5]).toBe(1);
-      expect(matrix[10]).toBe(1);
-      expect(matrix[15]).toBe(1);
-
-      // Check all other elements are 0
-      const expected = [
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-      ];
-      expect(matrix).toEqual(expected);
-    });
-  });
-
-  describe('multiplyMatrix', () => {
-    it('should multiply two identity matrices', () => {
-      const a = identityMatrix();
-      const b = identityMatrix();
-      const result = multiplyMatrix(a, b);
-
-      expect(result).toEqual(identityMatrix());
-    });
-
-    it('should multiply matrix by identity', () => {
-      const a = [
-        2, 0, 0, 0,
-        0, 2, 0, 0,
-        0, 0, 2, 0,
-        0, 0, 0, 2
-      ];
-      const b = identityMatrix();
-      const result = multiplyMatrix(a, b);
-
-      expect(result).toEqual(a);
-    });
-
-    it('should multiply scaling matrices correctly', () => {
-      const a = [ // Scale by 2 in X
-        2, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-      ];
-      const b = [ // Scale by 3 in Y
-        1, 0, 0, 0,
-        0, 3, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-      ];
-      const result = multiplyMatrix(a, b);
-
-      const expected = [
-        2, 0, 0, 0,
-        0, 3, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-      ];
-      expect(result).toEqual(expected);
-    });
-
-    it('should handle translation', () => {
-      const translate = [ // Translate by (1, 2, 3)
-        1, 0, 0, 1,
-        0, 1, 0, 2,
-        0, 0, 1, 3,
-        0, 0, 0, 1
-      ];
-      const scale = [ // Scale by 2
-        2, 0, 0, 0,
-        0, 2, 0, 0,
-        0, 0, 2, 0,
-        0, 0, 0, 1
-      ];
-      const result = multiplyMatrix(translate, scale);
-
-      // Result should have translation (1, 2, 3) * 2 and scale 2
-      expect(result[0]).toBe(2);
-      expect(result[5]).toBe(2);
-      expect(result[10]).toBe(2);
-      expect(result[3]).toBe(1);
-      expect(result[7]).toBe(2);
-      expect(result[11]).toBe(3);
-    });
-  });
-
-  describe('transposeMatrix', () => {
-    it('should transpose identity matrix', () => {
-      const matrix = identityMatrix();
-      const result = transposeMatrix(matrix);
-
-      expect(result).toEqual(matrix);
-    });
-
-    it('should transpose matrix correctly', () => {
-      const matrix = [
-        1, 2, 3, 4,
-        5, 6, 7, 8,
-        9, 10, 11, 12,
-        13, 14, 15, 16
-      ];
-      const result = transposeMatrix(matrix);
-
-      const expected = [
-        1, 5, 9, 13,
-        2, 6, 10, 14,
-        3, 7, 11, 15,
-        4, 8, 12, 16
-      ];
-      expect(result).toEqual(expected);
-    });
-
-    it('should handle rotation matrix', () => {
-      const rotation = [
-        0, -1, 0, 0,
-        1, 0, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-      ];
-      const result = transposeMatrix(rotation);
-
-      // Transpose of rotation is its inverse
-      const expected = [
-        0, 1, 0, 0,
-        -1, 0, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-      ];
-      expect(result).toEqual(expected);
-    });
-  });
-
   describe('invertMatrix', () => {
     it('should invert identity matrix', () => {
       const matrix = identityMatrix();
@@ -183,7 +65,6 @@ describe('Matrix Operations', () => {
       ];
       const result = invertMatrix(matrix);
 
-      // Inverse should have negative translation
       expect(result[3]).toBeCloseTo(-10, 5);
       expect(result[7]).toBeCloseTo(-20, 5);
       expect(result[11]).toBeCloseTo(-30, 5);
@@ -198,7 +79,6 @@ describe('Matrix Operations', () => {
       ];
       const result = invertMatrix(matrix);
 
-      // Inverse should scale by 0.5 and translate by (-5, -10, -15)
       expect(result[0]).toBeCloseTo(0.5, 5);
       expect(result[5]).toBeCloseTo(0.5, 5);
       expect(result[10]).toBeCloseTo(0.5, 5);
@@ -216,7 +96,6 @@ describe('Matrix Operations', () => {
       ];
       const result = invertMatrix(matrix);
 
-      // Inverse of rotation is its transpose
       expect(result[0]).toBeCloseTo(0, 5);
       expect(result[1]).toBeCloseTo(1, 5);
       expect(result[4]).toBeCloseTo(-1, 5);
@@ -233,7 +112,6 @@ describe('Matrix Operations', () => {
       const inverse = invertMatrix(matrix);
       const result = multiplyMatrix(matrix, inverse);
 
-      // Result should be identity matrix
       for (let i = 0; i < 16; i++) {
         const expected = (i === 0 || i === 5 || i === 10 || i === 15) ? 1 : 0;
         expect(result[i]).toBeCloseTo(expected, 4);

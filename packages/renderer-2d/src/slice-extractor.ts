@@ -7,6 +7,7 @@ import type {
 } from './types';
 
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
+import { getDataTypeSize, readVoxel } from '@jsmedgl/parser-nifti';
 
 export interface SliceExtractor extends ISliceExtractor {}
 
@@ -33,40 +34,17 @@ class SliceExtractorImpl implements SliceExtractor {
     this.normalizeVolumeData();
   }
 
-  private getDataTypeSize(datatype: number): number {
-    const sizes: Record<number, number> = {
-      2: 1, 4: 2, 8: 4, 16: 4, 64: 8,
-      256: 1, 512: 2, 768: 4, 1024: 8, 1280: 8
-    };
-    return sizes[datatype] || 1;
-  }
-
-  private readVoxel(data: ArrayBuffer, datatype: number, byteOffset: number): number {
-    const view = new DataView(data, byteOffset);
-    switch (datatype) {
-      case 2:   return view.getUint8(0);
-      case 4:   return view.getInt16(0, true);
-      case 8:   return view.getInt32(0, true);
-      case 16:  return view.getFloat32(0, true);
-      case 64:  return view.getFloat64(0, true);
-      case 256: return view.getInt8(0);
-      case 512: return view.getUint16(0, true);
-      case 768: return view.getUint32(0, true);
-      default:  return view.getUint8(0);
-    }
-  }
-
   private normalizeVolumeData(): void {
     const { data, header } = this.volume;
     const datatype = header.datatype;
-    const byteSize = this.getDataTypeSize(datatype);
+    const byteSize = getDataTypeSize(datatype);
     const numVoxels = data.byteLength / byteSize;
 
     // Find min/max
     let vMin = Infinity, vMax = -Infinity;
     const step = Math.max(1, Math.floor(numVoxels / 10000));
     for (let i = 0; i < numVoxels; i += step) {
-      const v = this.readVoxel(data, datatype, i * byteSize);
+      const v = readVoxel(data, i * byteSize, datatype);
       if (v < vMin) vMin = v;
       if (v > vMax) vMax = v;
     }
@@ -75,7 +53,7 @@ class SliceExtractorImpl implements SliceExtractor {
     // Normalize all data to Uint8Array
     this.normalizedData = new Uint8Array(numVoxels);
     for (let i = 0; i < numVoxels; i++) {
-      const v = this.readVoxel(data, datatype, i * byteSize);
+      const v = readVoxel(data, i * byteSize, datatype);
       let normalized = range > 0 ? Math.round(((v - vMin) / range) * 255) : (v > 0 ? 255 : 0);
       this.normalizedData[i] = Math.max(0, Math.min(255, normalized));
     }

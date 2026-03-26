@@ -256,7 +256,7 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     const containerH = this.container.offsetHeight;
 
     if (containerW === 0 || containerH === 0) {
-      requestAnimationFrame(() => this.render());
+      // R-14: Don't schedule another RAF — return and wait for resize observer
       return;
     }
 
@@ -312,7 +312,9 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, slice.texture);
     gl.uniform1i(this.displayUniforms.u_texture, 0);
-    gl.uniform1f(this.displayUniforms.u_windowWidth, this.windowLevel.window);
+    // R-02: Guard against zero/negative window width to prevent division by zero in shader
+    const safeWindowWidth = Math.max(1, this.windowLevel.window);
+    gl.uniform1f(this.displayUniforms.u_windowWidth, safeWindowWidth);
     gl.uniform1f(this.displayUniforms.u_windowCenter, this.windowLevel.level);
 
     const posLoc = gl.getAttribLocation(this.displayProgram!, 'a_position');
@@ -360,5 +362,8 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     if (this.displayBuffer) {
       this.gl.deleteBuffer(this.displayBuffer);
     }
+
+    // R-01: Remove canvas from DOM to prevent element accumulation
+    this.canvas.remove();
   }
 }

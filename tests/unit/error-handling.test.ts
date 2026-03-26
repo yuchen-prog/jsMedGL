@@ -124,19 +124,18 @@ describe('Error Handling', () => {
   });
 
   describe('Insufficient data', () => {
-    it('should handle truncated data gracefully', async () => {
+    it('should throw on truncated data', async () => {
       const buffer = createMinimalNifti1Buffer({
         dimensions: [64, 64, 64],
         datatype: 2,
         pixdim: [1.0, 1.0, 1.0, 1.0]
       });
 
-      // Create buffer with insufficient data
+      // Create buffer with insufficient data (only 400 bytes, need 64*64*64 = 262144 bytes)
       const smallBuffer = buffer.slice(0, 400);
 
-      // The parser should handle this case
-      const volume = await parseNifti(smallBuffer);
-      expect(volume).toBeDefined();
+      // R-03: Parser must throw on insufficient data, not silently return empty buffer
+      await expect(parseNifti(smallBuffer)).rejects.toThrow(/Insufficient data/);
     });
   });
 });
@@ -252,25 +251,31 @@ function createMinimalNifti1Buffer(options: {
 
   view.setInt32(0, 348, true); // sizeof_hdr
   view.setInt16(40, 3, true); // dim[0]
-  view.setInt16(42, options.dimensions[0], true);
-  view.setInt16(44, options.dimensions[1], true);
-  view.setInt16(46, options.dimensions[2], true);
-  view.setInt16(70, options.datatype, true);
-
-  // pixdim (float32)
-  view.setFloat32(76, options.pixdim[0], true);
-  view.setFloat32(80, options.pixdim[1], true);
-  view.setFloat32(84, options.pixdim[2], true);
-  view.setFloat32(88, options.pixdim[3], true);
+  view.setInt16(42, options.dimensions[0], true); // dim[1]
+  view.setInt16(44, options.dimensions[1], true); // dim[2]
+  view.setInt16(46, options.dimensions[2], true); // dim[3]
+  view.setInt16(48, 1, true); // dim[4]
+  view.setInt16(50, 1, true); // dim[5]
+  view.setInt16(52, 1, true); // dim[6]
+  view.setInt16(54, 1, true); // dim[7]
+  view.setInt16(70, options.datatype, true); // datatype
+  view.setFloat32(76, options.pixdim[0], true); // pixdim[0]
+  view.setFloat32(80, options.pixdim[1], true); // pixdim[1]
+  view.setFloat32(84, options.pixdim[2], true); // pixdim[2]
+  view.setFloat32(88, options.pixdim[3], true); // pixdim[3]
+  // Fill rest of header with zeros (prevents garbage reads on uninitialized fields)
+  for (let i = 92; i < 348; i += 4) {
+    view.setInt32(i, 0, true);
+  }
 
   if (options.qform) {
-    view.setInt16(252, options.qform.code, true);
-    view.setFloat32(256, options.qform.b, true);
-    view.setFloat32(260, options.qform.c, true);
-    view.setFloat32(264, options.qform.d, true);
-    view.setFloat32(268, options.qform.offset[0], true);
-    view.setFloat32(272, options.qform.offset[1], true);
-    view.setFloat32(276, options.qform.offset[2], true);
+    view.setInt16(252, options.qform.code, true); // qform_code
+    view.setFloat32(256, options.qform.b, true); // quatern_b
+    view.setFloat32(260, options.qform.c, true); // quatern_c
+    view.setFloat32(264, options.qform.d, true); // quatern_d
+    view.setFloat32(268, options.qform.offset[0], true); // qoffset_x
+    view.setFloat32(272, options.qform.offset[1], true); // qoffset_y
+    view.setFloat32(276, options.qform.offset[2], true); // qoffset_z
   }
 
   return buffer;

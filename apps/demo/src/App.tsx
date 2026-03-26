@@ -184,6 +184,28 @@ const SliceViewer = memo(function SliceViewer({
     viewRef.current?.setWindowLevel(windowLevel.window, windowLevel.level);
   }, [windowLevel.window, windowLevel.level]);
 
+  // ── Sync slice index with crosshair (RAF throttled) ───────────────────────────
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    let targetSlice: number;
+    switch (orientation) {
+      case 'axial':    targetSlice = crosshair.k; break;
+      case 'coronal':  targetSlice = crosshair.j; break;
+      case 'sagittal': targetSlice = crosshair.i; break;
+    }
+
+    // RAF throttle: only update once per animation frame
+    const rafId = requestAnimationFrame(() => {
+      if (view.getSliceIndex() !== targetSlice) {
+        view.setSliceIndex(targetSlice);
+      }
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [crosshair.i, crosshair.j, crosshair.k, orientation]);
+
   // ── Update crosshair position ───────────────────────────────────────────
   useEffect(() => {
     if (!enableCrosshair || !canvasReady) return;

@@ -28,5 +28,6 @@ export {
 } from './coordinate';
 
 export {
-  getDataTypeSize
+  getDataTypeSize,
+  readVoxel
 } from './utils';

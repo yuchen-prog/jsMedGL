@@ -49,6 +49,34 @@ export function isGzipCompressed(data: ArrayBuffer): boolean {
 }
 
 /**
+ * Read a single voxel value from a buffer at the given byte offset.
+ * Assumes little-endian byte order.
+ */
+export function readVoxel(
+  buffer: ArrayBuffer,
+  byteOffset: number,
+  datatype: number
+): number {
+  const view = new DataView(buffer, byteOffset);
+  switch (datatype) {
+    case   0: return 0;    // UNKNOWN
+    case   1: return view.getUint8(0);  // BINARY
+    case   2: return view.getUint8(0);  // UINT8
+    case   4: return view.getInt16(0, true);  // INT16
+    case   8: return view.getInt32(0, true);  // INT32
+    case  16: return view.getFloat32(0, true);  // FLOAT32
+    case  64: return view.getFloat64(0, true);  // FLOAT64
+    case 128: return view.getUint8(0);  // RGB24 — first byte only (caller handles full triplet)
+    case 256: return view.getInt8(0);  // INT8
+    case 512: return view.getUint16(0, true);  // UINT16
+    case 768: return view.getUint32(0, true);  // UINT32
+    case 1024: return view.getInt32(0, true);  // INT64 (JS number loses precision > 2^53)
+    case 1280: return view.getUint32(0, true);  // UINT64
+    default:   return view.getUint8(0);
+  }
+}
+
+/**
  * Get size of data type in bytes
  */
 export function getDataTypeSize(datatype: number): number {
@@ -72,7 +100,7 @@ export function getDataTypeSize(datatype: number): number {
 }
 
 /**
- * Create identity matrix (4x4)
+ * Create identity matrix (4x4) — used internally by coordinate.ts fallback path
  */
 export function identityMatrix(): number[] {
   return [
@@ -80,35 +108,6 @@ export function identityMatrix(): number[] {
     0, 1, 0, 0,
     0, 0, 1, 0,
     0, 0, 0, 1
-  ];
-}
-
-/**
- * Multiply two 4x4 matrices
- */
-export function multiplyMatrix(a: number[], b: number[]): number[] {
-  const result = new Array(16).fill(0);
-
-  for (let i = 0; i < 4; i++) {
-    for (let j = 0; j < 4; j++) {
-      for (let k = 0; k < 4; k++) {
-        result[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j];
-      }
-    }
-  }
-
-  return result;
-}
-
-/**
- * Transpose a 4x4 matrix
- */
-export function transposeMatrix(m: number[]): number[] {
-  return [
-    m[0], m[4], m[8], m[12],
-    m[1], m[5], m[9], m[13],
-    m[2], m[6], m[10], m[14],
-    m[3], m[7], m[11], m[15]
   ];
 }
 
