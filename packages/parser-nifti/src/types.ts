@@ -57,8 +57,9 @@ export interface NiftiHeader {
   qoffset_y: number;
   qoffset_z: number;
 
-  // Sform matrix (4x4 affine)
-  sform_inv: number[];
+  // Sform matrix (4x4 affine transform - IJK to RAS)
+  // Note: This is the FORWARD transform, not the inverse
+  sform: number[];
   sform_code_flag: number;
 
   // Description and auxiliary files

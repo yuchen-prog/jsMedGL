@@ -248,6 +248,7 @@ function createMinimalNifti1Buffer(options: {
   const dataSize = options.dimensions[0] * options.dimensions[1] * options.dimensions[2];
   const buffer = new ArrayBuffer(headerSize + dataSize);
   const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
 
   view.setInt32(0, 348, true); // sizeof_hdr
   view.setInt16(40, 3, true); // dim[0]
@@ -267,6 +268,12 @@ function createMinimalNifti1Buffer(options: {
   for (let i = 92; i < 348; i += 4) {
     view.setInt32(i, 0, true);
   }
+
+  // NIfTI-1 magic field at offset 344-347: "n+1\0" (single .nii file)
+  bytes[344] = 0x6e; // 'n'
+  bytes[345] = 0x2b; // '+'
+  bytes[346] = 0x31; // '1'
+  bytes[347] = 0x00; // '\0'
 
   if (options.qform) {
     view.setInt16(252, options.qform.code, true); // qform_code

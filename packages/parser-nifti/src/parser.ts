@@ -41,11 +41,11 @@ export async function parseNifti(
     header.dim[3]
   ];
 
-  // Extract spacing
+  // Extract spacing - always use absolute values
   const spacing: [number, number, number] = [
     Math.abs(header.pixdim[1]),
-    header.pixdim[2],
-    header.pixdim[3]
+    Math.abs(header.pixdim[2]),
+    Math.abs(header.pixdim[3])
   ];
 
   // Extract affine matrix
@@ -116,22 +116,22 @@ export function createNiftiParser(options?: NiftiParserOptions) {
 function parseNiftiHeaderFromBuffer(buffer: ArrayBuffer, options?: NiftiParserOptions): NiftiHeader {
   const view = new DataView(buffer);
 
-  // NIfTI-1 stores sizeof_hdr at offset 0; NIfTI-2 stores it at offset 4.
-  // Try offset 0 first (NIfTI-1), fall back to offset 4 (NIfTI-2).
-  const sizeofHdrAt0 = view.getInt32(0, true);
+  // Both NIfTI-1 and NIfTI-2 store sizeof_hdr at offset 0
+  // NIfTI-1: sizeof_hdr = 348
+  // NIfTI-2: sizeof_hdr = 540
+  const sizeofHdr = view.getInt32(0, true);
   let header: NiftiHeader;
 
-  if (sizeofHdrAt0 === 348) {
-    // NIfTI-1
+  if (sizeofHdr === 348) {
+    // NIfTI-1: validate magic field at bytes 344-347
+    validateNifti1Magic(view);
     header = parseNifti1Header(buffer);
+  } else if (sizeofHdr === 540) {
+    // NIfTI-2: validate magic field at bytes 4-11
+    validateNifti2Magic(view);
+    header = parseNifti2Header(buffer);
   } else {
-    // Could be NIfTI-2 (sizeof_hdr at offset 4) or invalid
-    const sizeofHdrAt4 = view.getInt32(4, true);
-    if (sizeofHdrAt4 === 540) {
-      header = parseNifti2Header(buffer);
-    } else {
-      throw new Error(`Unknown NIfTI format. Expected sizeof_hdr to be 348 or 540, got sizeof_hdr@0=${sizeofHdrAt0}, sizeof_hdr@4=${sizeofHdrAt4}`);
-    }
+    throw new Error(`Unknown NIfTI format. Expected sizeof_hdr to be 348 or 540, got ${sizeofHdr}`);
   }
 
   // Validate header in strict mode
@@ -140,6 +140,47 @@ function parseNiftiHeaderFromBuffer(buffer: ArrayBuffer, options?: NiftiParserOp
   }
 
   return header;
+}
+
+/**
+ * Validate NIfTI-1 magic field at bytes 344-347.
+ * Valid values: "ni1\0" (header+img pair) or "n+1\0" (single .nii file)
+ */
+function validateNifti1Magic(view: DataView): void {
+  if (view.byteLength < 348) {
+    throw new Error('Buffer too small for NIfTI-1 header (need at least 348 bytes)');
+  }
+  const magic = String.fromCharCode(
+    view.getUint8(344),
+    view.getUint8(345),
+    view.getUint8(346),
+    view.getUint8(347)
+  );
+  if (magic !== 'ni1\0' && magic !== 'n+1\0') {
+    throw new Error(`Invalid NIfTI-1 magic field: "${magic.replace(/\0/g, '\\0')}". Expected "ni1\\0" or "n+1\\0".`);
+  }
+}
+
+/**
+ * Validate NIfTI-2 magic field at bytes 4-11.
+ * Valid values: "ni2\0\r\n\x1a\n" (header+img pair) or "n+2\0\r\n\x1a\n" (single .nii file)
+ * Note: The first 4 bytes (offset 0-3) contain sizeof_hdr = 540
+ */
+function validateNifti2Magic(view: DataView): void {
+  if (view.byteLength < 544) {
+    throw new Error('Buffer too small for NIfTI-2 header (need at least 544 bytes)');
+  }
+  // NIfTI-2 magic is at offset 4-11 (8 bytes)
+  // Valid formats: "ni2\0\r\n\x1a\n" or "n+2\0\r\n\x1a\n"
+  const magic4 = String.fromCharCode(
+    view.getUint8(4),
+    view.getUint8(5),
+    view.getUint8(6),
+    view.getUint8(7)
+  );
+  if (magic4 !== 'ni2\0' && magic4 !== 'n+2\0') {
+    throw new Error(`Invalid NIfTI-2 magic field: "${magic4.replace(/\0/g, '\\0')}". Expected "ni2\\0" or "n+2\\0".`);
+  }
 }
 
 /**

@@ -43,7 +43,7 @@ export interface NiftiHeader {
   qoffset_x: number;
   qoffset_y: number;
   qoffset_z: number;
-  sform_inv: Mat4;
+  sform: Mat4;
 }
 
 export interface NiftiVolume {

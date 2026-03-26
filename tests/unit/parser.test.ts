@@ -73,7 +73,7 @@ describe('NIfTI Parser', () => {
     it('should use sform when sform_code > 0', () => {
       const header = createMockHeader({
         sform_code: 1,
-        sform_inv: createIdentityMatrix()
+        sform: createIdentityMatrix()
       });
 
       const report = validateOrientation(header);
@@ -108,10 +108,11 @@ function createMinimalNifti1Buffer(options: {
   datatype: number;
   pixdim: [number, number, number, number];
 }): ArrayBuffer {
-  // NIfTI-1 header is 348 bytes, but we need extra space for intent_name
+  // NIfTI-1 header is 348 bytes, but we need extra space for magic field at 344-347
   const headerSize = 368; // 348 + 20 for safety margin
   const buffer = new ArrayBuffer(headerSize);
   const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
 
   view.setInt32(0, 348, true); // sizeof_hdr
   view.setInt16(40, 3, true); // dim[0]
@@ -119,12 +120,18 @@ function createMinimalNifti1Buffer(options: {
   view.setInt16(44, options.dimensions[1], true); // dim[2]
   view.setInt16(46, options.dimensions[2], true); // dim[3]
   view.setInt16(70, options.datatype, true); // datatype
-  view.setFloat64(76, options.pixdim[0], true); // pixdim[0]
-  view.setFloat64(80, options.pixdim[1], true); // pixdim[1]
-  view.setFloat64(84, options.pixdim[2], true); // pixdim[2]
-  view.setFloat64(88, options.pixdim[3], true); // pixdim[3]
+  view.setFloat32(76, options.pixdim[0], true); // pixdim[0]
+  view.setFloat32(80, options.pixdim[1], true); // pixdim[1]
+  view.setFloat32(84, options.pixdim[2], true); // pixdim[2]
+  view.setFloat32(88, options.pixdim[3], true); // pixdim[3]
   view.setInt16(252, 0, true); // qform_code
   view.setInt16(254, 0, true); // sform_code
+
+  // NIfTI-1 magic field at offset 344-347: "n+1\0" (single .nii file)
+  bytes[344] = 0x6e; // 'n'
+  bytes[345] = 0x2b; // '+'
+  bytes[346] = 0x31; // '1'
+  bytes[347] = 0x00; // '\0'
 
   return buffer;
 }
@@ -143,7 +150,7 @@ function createMockHeader(options: Partial<NiftiHeader> = {}): NiftiHeader {
     qoffset_x: options.qoffset_x || 0,
     qoffset_y: options.qoffset_y || 0,
     qoffset_z: options.qoffset_z || 0,
-    sform_inv: options.sform_inv || createIdentityMatrix(),
+    sform: options.sform || createIdentityMatrix(),
     sform_code_flag: 0,
     descrip: '',
     aux_file: '',

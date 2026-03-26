@@ -84,9 +84,9 @@ describe('NIfTI-2 Header Parsing', () => {
 
       expect(header.sform_code).toBe(1);
       // Check that sform matrix was parsed (first 3 rows)
-      expect(header.sform_inv).toHaveLength(16);
+      expect(header.sform).toHaveLength(16);
       // Last element should be 1 (4th row of identity)
-      expect(header.sform_inv[15]).toBe(1);
+      expect(header.sform[15]).toBe(1);
     });
   });
 
@@ -108,6 +108,7 @@ describe('NIfTI-2 Header Parsing', () => {
 });
 
 // Helper function to create NIfTI-2 buffer
+// Reference: https://brainder.org/2015/04/03/the-nifti-2-file-format/
 function createMinimalNifti2Buffer(options: {
   dimensions: [number, number, number];
   datatype: number;
@@ -122,53 +123,68 @@ function createMinimalNifti2Buffer(options: {
   const headerSize = 540;
   const buffer = new ArrayBuffer(headerSize + 1024); // Extra space for data
   const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
 
-  // NIfTI-2 magic and sizeof_hdr
-  view.setInt32(0, 0, true); // First 4 bytes: magic (ni2\0)
-  view.setInt32(4, 540, true); // sizeof_hdr at offset 4
+  // sizeof_hdr at offset 0 (int32) = 540
+  view.setInt32(0, 540, true);
 
-  // Dimensions (int64, 8 bytes each, starting at offset 8)
-  view.setBigInt64(8, BigInt(3), true); // dim[0]
-  view.setBigInt64(16, BigInt(options.dimensions[0]), true); // dim[1]
-  view.setBigInt64(24, BigInt(options.dimensions[1]), true); // dim[2]
-  view.setBigInt64(32, BigInt(options.dimensions[2]), true); // dim[3]
-  view.setBigInt64(40, BigInt(1), true); // dim[4]
-  view.setBigInt64(48, BigInt(1), true); // dim[5]
-  view.setBigInt64(56, BigInt(1), true); // dim[6]
-  view.setBigInt64(64, BigInt(1), true); // dim[7]
+  // magic at offset 4-11 (8 bytes): "n+2\0" + padding
+  bytes[4] = 0x6e; // 'n'
+  bytes[5] = 0x2b; // '+'
+  bytes[6] = 0x32; // '2'
+  bytes[7] = 0x00; // '\0'
+  bytes[8] = 0x0d; // '\r' (part of NIfTI-2 magic signature)
+  bytes[9] = 0x0a; // '\n'
+  bytes[10] = 0x1a; // 0x1a
+  bytes[11] = 0x0a; // '\n'
 
-  // datatype (int16 at offset 72)
-  view.setInt16(72, options.datatype, true);
+  // datatype at offset 12 (int16)
+  view.setInt16(12, options.datatype, true);
 
-  // pixdim (float64, 8 bytes each, starting at offset 80)
-  view.setFloat64(80, 1.0, true); // pixdim[0] (qfac)
-  view.setFloat64(88, options.pixdim[0], true); // pixdim[1]
-  view.setFloat64(96, options.pixdim[1], true); // pixdim[2]
-  view.setFloat64(104, options.pixdim[2], true); // pixdim[3]
+  // Dimensions at offset 16 (int64[8], 8 bytes each)
+  view.setBigInt64(16, BigInt(3), true); // dim[0]
+  view.setBigInt64(24, BigInt(options.dimensions[0]), true); // dim[1]
+  view.setBigInt64(32, BigInt(options.dimensions[1]), true); // dim[2]
+  view.setBigInt64(40, BigInt(options.dimensions[2]), true); // dim[3]
+  view.setBigInt64(48, BigInt(1), true); // dim[4]
+  view.setBigInt64(56, BigInt(1), true); // dim[5]
+  view.setBigInt64(64, BigInt(1), true); // dim[6]
+  view.setBigInt64(72, BigInt(1), true); // dim[7]
 
-  // vox_offset (float64 at offset 144)
-  view.setFloat64(144, 540, true);
+  // pixdim at offset 104 (float64[8], 8 bytes each)
+  view.setFloat64(104, 1.0, true); // pixdim[0] (qfac)
+  view.setFloat64(112, options.pixdim[0], true); // pixdim[1]
+  view.setFloat64(120, options.pixdim[1], true); // pixdim[2]
+  view.setFloat64(128, options.pixdim[2], true); // pixdim[3]
+  view.setFloat64(136, 1.0, true); // pixdim[4]
+  view.setFloat64(144, 1.0, true); // pixdim[5]
+  view.setFloat64(152, 1.0, true); // pixdim[6]
+  view.setFloat64(160, 1.0, true); // pixdim[7]
 
-  // qform_code and sform_code (int16 at offsets 344 and 346)
-  view.setInt16(344, options.qform_code || 0, true);
-  view.setInt16(346, options.sform_code || 0, true);
+  // vox_offset at offset 168 (int64)
+  view.setBigInt64(168, BigInt(540), true);
 
-  // qform parameters (float64, starting at offset 348)
+  // qform_code at offset 344 (int32)
+  view.setInt32(344, options.qform_code || 0, true);
+  // sform_code at offset 348 (int32)
+  view.setInt32(348, options.sform_code || 0, true);
+
+  // qform parameters (float64, starting at offset 352)
   if (options.qform_code && options.quatern) {
-    view.setFloat64(348, options.quatern[0], true); // quatern_b
-    view.setFloat64(356, options.quatern[1], true); // quatern_c
-    view.setFloat64(364, options.quatern[2], true); // quatern_d
+    view.setFloat64(352, options.quatern[0], true); // quatern_b
+    view.setFloat64(360, options.quatern[1], true); // quatern_c
+    view.setFloat64(368, options.quatern[2], true); // quatern_d
     if (options.qoffset) {
-      view.setFloat64(372, options.qoffset[0], true); // qoffset_x
-      view.setFloat64(380, options.qoffset[1], true); // qoffset_y
-      view.setFloat64(388, options.qoffset[2], true); // qoffset_z
+      view.setFloat64(376, options.qoffset[0], true); // qoffset_x
+      view.setFloat64(384, options.qoffset[1], true); // qoffset_y
+      view.setFloat64(392, options.qoffset[2], true); // qoffset_z
     }
   }
 
-  // sform matrix (float64, starting at offset 392, 12 values for 3 rows)
+  // sform matrix (float64, starting at offset 400, 12 values for 3 rows)
   if (options.sform_code && options.sform) {
     for (let i = 0; i < 12; i++) {
-      view.setFloat64(392 + i * 8, options.sform[i], true);
+      view.setFloat64(400 + i * 8, options.sform[i], true);
     }
   }
 

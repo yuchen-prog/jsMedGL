@@ -76,74 +76,84 @@
 
 ---
 
-## Phase 2: NIfTI Parser 校验加固
+## Phase 2: NIfTI Parser 校验加固 ✅ 已完成
 
-### 2.1 添加 Magic 字段验证
+### 2.1 添加 Magic 字段验证 ✅
 
 **问题**: `parseNiftiHeader` 不验证 magic 字段，任意 540 字节文件都能被当作 NIfTI 解析。
 
-**修复**: 在 `parseNifti1Header` 和 `parseNifti2Header` 中读取并验证 magic 字段：
-- NIfTI-1: offsets 344-347 应为 `"ni1\0"` 或 `"n+1\0"`
-- NIfTI-2: offsets 0-3 应为 `"ni2\0"` 或 `"n+2\0"`
+**修复**: 在 `parseNiftiHeaderFromBuffer` 中添加 `validateNifti1Magic` 和 `validateNifti2Magic` 函数：
+- NIfTI-1: 验证 offsets 344-347 为 `"ni1\0"` 或 `"n+1\0"`
+- NIfTI-2: 验证 offsets 4-11 为 `"ni2\0"` 或 `"n+2\0"`
 
-无效时抛出 `Error('Invalid NIfTI magic field')`。
+无效时抛出 `Error('Invalid NIfTI-X magic field')`。
 
-### 2.2 修复 NIfTI-2 字段偏移量
+**修改文件**: `packages/parser-nifti/src/parser.ts`
 
-**问题**: `slice_start` 和 `slice_end` 在 NIfTI-2 中的偏移量写错了，读到的是 `dim[1]` 和 `dim[2]`。
+### 2.2 修复 NIfTI-2 字段偏移量 ✅
 
-**修复**: 查 NIfTI-2 spec，确认每个字段的准确偏移量并修正。
+**问题**: NIfTI-2 所有字段偏移量基于错误假设（误以为 sizeof_hdr 在 offset 4），`slice_start`/`slice_end` 读到了 `dim[1]`/`dim[2]`。
 
-### 2.3 添加端序（Endianness）处理
+**修复**: 根据 [NIfTI-2 规范](https://brainder.org/2015/04/03/the-nifti-2-file-format/)重写 `parseNifti2Header`：
+- `sizeof_hdr` at offset 0（值为 540）
+- `datatype` at offset 12
+- `dim[8]` at offset 16-79（int64）
+- `pixdim[8]` at offset 104-167（float64）
+- `slice_start` at offset 224（int64）
+- `slice_end` at offset 232（int64）
+- `qform_code` at offset 344（int32）
+- `quatern_*` at offset 352-392（float64）
+- `sform` matrix at offset 400-495（float64）
 
-**问题**: 大端 NIfTI 文件的所有字段和图像数据都需要字节交换，`swapEndianness` 工具存在但从未被调用。
+新增 `parseSformMatrix64` 函数用于解析 float64 格式的 sform 矩阵。
 
-**修复**:
-1. 检测大端：`dim[0] < 0`（NIfTI-1）或通过 `sizeof_hdr` 的大端特征
-2. 在 header 解析后和图像数据读取前调用 `swapEndianness`
+**修改文件**: `packages/parser-nifti/src/header-parser.ts`
 
-### 2.4 修复 `pixdim[2]` 和 `pixdim[3]` 未取绝对值
+### 2.3 添加端序（Endianness）处理 ⏭️ 跳过
 
-**位置**: `parser.ts:45-49`, `coordinate.ts:221`
+**问题**: 大端 NIfTI 文件的所有字段和图像数据都需要字节交换。
 
+**状态**: 跳过。大端格式在实践中罕见（绝大多数 NIfTI 文件为小端），如后续需要可复用已有的 `swapEndianness` 工具函数。
+
+### 2.4 修复 `pixdim[2]` 和 `pixdim[3]` 未取绝对值 ✅
+
+**问题**: 某些 NIfTI 文件的 pixdim[2] 或 pixdim[3] 为负值（镜像轴），导致 spacing 计算错误。
+
+**修复**: 在以下位置统一对 pixdim[1-3] 取绝对值：
+- `parser.ts`: `spacing` 提取
+- `coordinate.ts`: `createFallbackMatrix` 和 `extractSpacing`
+
+**修改文件**: `packages/parser-nifti/src/parser.ts`, `packages/parser-nifti/src/coordinate.ts`
+
+### 2.5 Quaternion 归一化校验 ✅
+
+**问题**: 如果 `quatern_b^2 + quatern_c^2 + quatern_d^2 > 1`（浮点精度误差），则 `a = sqrt(1 - ...)` 结果为 NaN。
+
+**修复**: 在 `extractQform` 中检测 quaternion 模长平方 > 1 时进行归一化：
 ```typescript
-// 修复前
-const spacing: [number, number, number] = [
-  Math.abs(header.pixdim[1]),
-  header.pixdim[2],   // 可能为负
-  header.pixdim[3]    // 可能为负
-];
-
-// 修复后
-const spacing: [number, number, number] = [
-  Math.abs(header.pixdim[1]),
-  Math.abs(header.pixdim[2]),
-  Math.abs(header.pixdim[3])
-];
-```
-
-### 2.5 Quaternion 归一化校验
-
-**问题**: 如果 `quatern_b^2 + quatern_c^2 + quatern_d^2 > 1`，则 `a = sqrt(1 - ...)` 结果为 NaN。
-
-**修复**: 在 `extractQform` 中校验或 clamp：
-```typescript
-const quatMagSq = quatern_b * quatern_b + quatern_c * quatern_c + quatern_d * quatern_d;
+const quatMagSq = qb * qb + qc * qc + qd * qd;
 if (quatMagSq > 1) {
-  // 归一化 quaternion
   const scale = 1 / Math.sqrt(quatMagSq);
-  // ... 应用 scale
+  qb *= scale; qc *= scale; qd *= scale;
 }
 ```
 
-### 2.6 清理类型命名
+同时修复 `extractQform` 中 `sy`/`sz` 未取绝对值的问题。
 
-**问题**: `sform_inv` 类型字段存的是 forward transform，命名误导。
+**修改文件**: `packages/parser-nifti/src/coordinate.ts`
+
+### 2.6 清理类型命名 ✅
+
+**问题**: `NiftiHeader.sform_inv` 字段存储的是 forward transform（IJK → RAS），命名误导。
 
 **修复**:
-1. 将 `NiftiHeader.sform_inv` 重命名为 `sform_xform`
-2. 更新 `coordinate.ts` 中的注释说明
-3. 反向传播检查是否有其他引用需要更新
+1. 将 `NiftiHeader.sform_inv` 重命名为 `NiftiHeader.sform`
+2. 更新 `header-parser.ts` 中所有赋值
+3. 更新 `coordinate.ts` 中注释和引用
+4. 更新 `core/src/types.ts` 中的类型定义
+5. 更新所有测试文件中的引用
+
+**修改文件**: `packages/parser-nifti/src/types.ts`, `packages/parser-nifti/src/header-parser.ts`, `packages/parser-nifti/src/coordinate.ts`, `packages/core/src/types.ts`, `tests/unit/nifti2.test.ts`, `tests/unit/parser.test.ts`
 
 ---
 
@@ -324,11 +334,11 @@ Phase 6 (Oblique MPR)           ← 依赖 Phase 5 完成
 | R-04 | High | datatype 工具 3 处重复 | Phase 1 |
 | R-05 | High | Canvas 2D 路径废弃 | Phase 1 |
 | R-06 | High | 死代码清理 | Phase 1 |
-| R-07 | High | NIfTI-2 字段偏移量错误 | Phase 2 |
-| R-08 | High | 无 magic 字段验证 | Phase 2 |
-| R-09 | High | 大端文件未处理 | Phase 2 |
-| R-10 | High | pixdim[2/3] 未取绝对值 | Phase 2 |
-| R-11 | High | sform_inv 命名混乱 | Phase 2 |
+| R-07 | High | NIfTI-2 字段偏移量错误 | Phase 2 | ✅ 已完成 |
+| R-08 | High | 无 magic 字段验证 | Phase 2 | ✅ 已完成 |
+| R-09 | High | 大端文件未处理 | Phase 2 | ⏭️ 跳过 |
+| R-10 | High | pixdim[2/3] 未取绝对值 | Phase 2 | ✅ 已完成 |
+| R-11 | High | sform_inv 命名混乱 | Phase 2 | ✅ 已完成 |
 | R-12 | Medium | loadImageData 选项未实现 | Phase 1 |
 | R-13 | Medium | TextureManager 无 dispose | Phase 1 |
 | R-14 | Medium | zero-size 容器无限 RAF | Phase 3 |
@@ -339,6 +349,6 @@ Phase 6 (Oblique MPR)           ← 依赖 Phase 5 完成
 | R-19 | Low | 十字线圆点颜色错误 | Phase 4 |
 | R-20 | Low | 侧边栏无响应式 | Phase 4 |
 | R-21 | Low | 坐标系注释与实现不符 | Phase 3 |
-| R-22 | Low | quaternion 归一化未校验 | Phase 2 |
+| R-22 | Low | quaternion 归一化未校验 | Phase 2 | ✅ 已完成 |
 | R-23 | Low | 弱测试断言 | Phase 5 |
 | R-24 | Low | Renderer 无测试覆盖 | Phase 5 |

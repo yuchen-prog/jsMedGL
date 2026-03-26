@@ -24,12 +24,11 @@ export function extractAffineMatrix(header: NiftiHeader): number[] {
 
 /**
  * Extract sform matrix (method 3)
- * Note: NIfTI-1 stores the forward transform (IJK to RAS), not the inverse
+ * Note: NIfTI stores the forward transform (IJK to RAS), This is not an inverse.
  */
 function extractSform(header: NiftiHeader): number[] {
-  // The sform matrix is already the forward transform (IJK -> RAS)
-  // Return it directly, no inversion needed
-  return header.sform_inv; // Note: field is misnamed in our type, it's actually sform (forward)
+  // The sform matrix is the forward transform (IJK -> RAS)
+  return header.sform;
 }
 
 /**
@@ -38,29 +37,44 @@ function extractSform(header: NiftiHeader): number[] {
 function extractQform(header: NiftiHeader): number[] {
   const { quatern_b, quatern_c, quatern_d, qoffset_x, qoffset_y, qoffset_z, pixdim } = header;
 
-  // Calculate quaternion
-  const a = Math.sqrt(1 - quatern_b * quatern_b - quatern_c * quatern_c - quatern_d * quatern_d);
+  // Normalize quaternion if necessary
+  // NIfTI spec allows b,c,d to not be perfectly normalized due to rounding
+  const quatMagSq = quatern_b * quatern_b + quatern_c * quatern_c + quatern_d * quatern_d;
+  let qb = quatern_b;
+  let qc = quatern_c;
+  let qd = quatern_d;
+
+  if (quatMagSq > 1) {
+    // Normalize to prevent sqrt of negative number → NaN
+    const scale = 1 / Math.sqrt(quatMagSq);
+    qb *= scale;
+    qc *= scale;
+    qd *= scale;
+  }
+
+  // Calculate quaternion a component (stored implicitly in NIfTI)
+  const a = Math.sqrt(Math.max(0, 1 - qb * qb - qc * qc - qd * qd));
 
   // Build rotation matrix from quaternion
   const R = [
-    a * a + quatern_b * quatern_b - quatern_c * quatern_c - quatern_d * quatern_d,
-    2 * (quatern_b * quatern_c - a * quatern_d),
-    2 * (quatern_b * quatern_d + a * quatern_c),
+    a * a + qb * qb - qc * qc - qd * qd,
+    2 * (qb * qc - a * qd),
+    2 * (qb * qd + a * qc),
 
-    2 * (quatern_b * quatern_c + a * quatern_d),
-    a * a + quatern_c * quatern_c - quatern_b * quatern_b - quatern_d * quatern_d,
-    2 * (quatern_c * quatern_d - a * quatern_b),
+    2 * (qb * qc + a * qd),
+    a * a + qc * qc - qb * qb - qd * qd,
+    2 * (qc * qd - a * qb),
 
-    2 * (quatern_b * quatern_d - a * quatern_c),
-    2 * (quatern_c * quatern_d + a * quatern_b),
-    a * a + quatern_d * quatern_d - quatern_b * quatern_b - quatern_c * quatern_c
+    2 * (qb * qd - a * qc),
+    2 * (qc * qd + a * qb),
+    a * a + qd * qd - qb * qb - qc * qc
   ];
 
-  // Get voxel spacing
+  // Get voxel spacing (always use absolute values)
   const qfac = pixdim[0] < 0 ? -1 : 1;
   const sx = Math.abs(pixdim[1]);
-  const sy = pixdim[2];
-  const sz = pixdim[3];
+  const sy = Math.abs(pixdim[2]);
+  const sz = Math.abs(pixdim[3]);
 
   // Build affine matrix: [R * diag([sx, sy* qfac, sz]), qoffset]
   const affine = new Array(16).fill(0);
@@ -91,10 +105,10 @@ function createFallbackMatrix(header: NiftiHeader): number[] {
   const { pixdim } = header;
   const affine = identityMatrix();
 
-  // Set diagonal elements to voxel spacing
+  // Set diagonal elements to voxel spacing (always use absolute values)
   affine[0] = Math.abs(pixdim[1]);
-  affine[5] = pixdim[2];
-  affine[10] = pixdim[3];
+  affine[5] = Math.abs(pixdim[2]);
+  affine[10] = Math.abs(pixdim[3]);
 
   return affine;
 }
@@ -219,8 +233,8 @@ function checkIfOblique(affine: number[]): boolean {
 function extractSpacing(header: NiftiHeader): [number, number, number] {
   return [
     Math.abs(header.pixdim[1]),
-    header.pixdim[2],
-    header.pixdim[3]
+    Math.abs(header.pixdim[2]),
+    Math.abs(header.pixdim[3])
   ];
 }
 
