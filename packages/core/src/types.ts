@@ -1,26 +1,10 @@
 // Core Types for jsMedgl
 
 // ============================================
-// NIfTI Data Types
+// Import NIfTI types from parser-nifti (single source of truth)
 // ============================================
-
-export enum NiftiDataType {
-  UINT8 = 2,
-  INT16 = 4,
-  INT32 = 8,
-  FLOAT32 = 16,
-  FLOAT64 = 64,
-  RGB24 = 128,
-  RGBA32 = 2304,
-}
-
-export enum NiftiXform {
-  UNKNOWN = 0,
-  SCANNER_ANAT = 1,
-  ALIGNED_ANAT = 2,
-  TALAIRACH = 3,
-  MNI_152 = 4,
-}
+import { NiftiDataType, NiftiXform } from '@jsmedgl/parser-nifti';
+export { NiftiDataType, NiftiXform };
 
 // ============================================
 // Volume Types
@@ -53,6 +37,8 @@ export interface NiftiVolume {
   spacing: [number, number, number];
   affine: Mat4;
   inverseAffine: Mat4;
+  // Optional warnings (e.g., 4D data detected)
+  warnings?: string[];
 }
 
 // ============================================

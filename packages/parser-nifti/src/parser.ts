@@ -34,6 +34,14 @@ export async function parseNifti(
   // Parse header
   const header = parseNiftiHeaderFromBuffer(buffer, options);
 
+  // Check for unsupported data (4D+, etc.)
+  const warnings: string[] = [];
+  if (header.dim[0] >= 4 && header.dim[4] > 1) {
+    const msg = `4D data detected (dim[4]=${header.dim[4]}). 4D volumes are not fully supported - only the first 3D volume will be rendered.`;
+    console.warn(msg);
+    warnings.push(msg);
+  }
+
   // Extract dimensions
   const dimensions: [number, number, number] = [
     header.dim[1],
@@ -50,14 +58,14 @@ export async function parseNifti(
 
   // Extract affine matrix
   const affine = extractAffineMatrix(header);
-  
+
   // Simple matrix inversion (will be improved)
   const inverseAffine = invertMatrix(affine);
 
   // Load image data
   const data = extractImageData(buffer, header);
 
-  return {
+  const result: NiftiVolume = {
     header,
     data,
     dimensions,
@@ -65,6 +73,12 @@ export async function parseNifti(
     affine,
     inverseAffine
   };
+
+  if (warnings.length > 0) {
+    result.warnings = warnings;
+  }
+
+  return result;
 }
 
 /**

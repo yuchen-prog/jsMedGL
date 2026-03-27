@@ -98,6 +98,9 @@ export interface NiftiVolume {
   spacing: [number, number, number];
   affine: number[];
   inverseAffine: number[];
+
+  // Optional warnings (e.g., 4D data detected)
+  warnings?: string[];
 }
 
 /**

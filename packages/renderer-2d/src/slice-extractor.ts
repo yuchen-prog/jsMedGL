@@ -38,6 +38,12 @@ class SliceExtractorImpl implements SliceExtractor {
     const { data, header } = this.volume;
     const datatype = header.datatype;
     const byteSize = getDataTypeSize(datatype);
+
+    // Guard against unsupported datatypes (byteSize=0)
+    if (byteSize === 0) {
+      throw new Error(`Unsupported datatype for rendering: ${datatype} (byteSize=0)`);
+    }
+
     const numVoxels = data.byteLength / byteSize;
 
     // Find min/max

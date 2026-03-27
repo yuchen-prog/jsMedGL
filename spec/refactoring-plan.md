@@ -157,44 +157,48 @@ if (quatMagSq > 1) {
 
 ---
 
-## Phase 3: 类型安全与边界处理
+## Phase 3: 类型安全与边界处理 ✅ 全部完成
 
-### 3.1 修复零尺寸除零
+### 3.1 修复零尺寸除零 ✅
 
 **问题**: `byteSize === 0`（如 `BINARY`/`UNKNOWN` datatype）导致 `numVoxels = Infinity`，normalization 循环永不执行，结果全 NaN。
 
-**修复**: 在 `normalizeVolumeData` 入口加：
+**修复**: 在 `normalizeVolumeData` 入口加守卫：
 ```typescript
 if (byteSize === 0) {
-  throw new Error(`Unsupported datatype: ${datatype} (byteSize=0)`);
+  throw new Error(`Unsupported datatype for rendering: ${datatype} (byteSize=0)`);
 }
 ```
 
-### 3.2 修复零尺寸容器无限 RAF
+**修改文件**: `packages/renderer-2d/src/slice-extractor.ts`
+
+### 3.2 修复零尺寸容器无限 RAF ✅
 
 **问题**: 容器宽高为 0 时每帧调度 render，永不停止。
 
-**修复**: 在 `render()` 开头加退出条件，不调度下一个 RAF：
-```typescript
-if (containerW === 0 || containerH === 0) {
-  return;  // 不继续调度
-}
-```
+**状态**: Phase 0 已修复。`webgl-slice-view.ts:258` 已有检查。
 
-### 3.3 统一 `datatype` 类型使用
+### 3.3 统一 `datatype` 类型使用 ✅
 
-**问题**: `NiftiHeader.datatype` 是枚举类型，但所有 renderer 代码将其隐式转为 `number`。
-
-**修复**: 在 renderer 中统一显式 cast，或将 datatype 工具函数参数类型改为 `number` 并内部校验范围。
-
-### 3.4 修复 `NiftiVolume.dimensions` 丢弃第 4 维
-
-**问题**: `dimensions` 只取前 3 维，`dim[4]`（如 fMRI 时间轴）被丢弃。
+**问题**: `core` 和 `parser-nifti` 各自维护 `NiftiDataType` 枚举，内容不一致。
 
 **修复**:
-1. 将 `dimensions` 类型改为 `[number, number, number, number]`
-2. 或新增 `volumeDimensions4D: [number, number, number, number]` 字段
-3. Renderer 忽略第 4 维（取前 3 个元素），parser 层保留完整信息
+1. `core/src/types.ts` 从 `@jsmedgl/parser-nifti` 导入 `NiftiDataType` 和 `NiftiXform`
+2. 移除 `core/tsconfig.json` 中的 `rootDir` 限制，允许跨包 import
+3. 消除重复定义，统一为 parser-nifti 的完整 16 种 datatype
+
+**修改文件**: `packages/core/src/types.ts`, `packages/core/tsconfig.json`
+
+### 3.4 4D 数据检测与提示 ✅
+
+**问题**: `dimensions` 只取前 3 维，`dim[4]`（如 fMRI 时间轴）被静默丢弃。
+
+**修复**: 不完全支持 4D，但检测并给出警告：
+1. 在 `parseNifti` 中检测 `dim[0] >= 4 && dim[4] > 1`
+2. 添加 `console.warn` 提示用户 4D 数据不支持
+3. 在 `NiftiVolume` 类型中新增可选 `warnings?: string[]` 字段
+
+**修改文件**: `packages/parser-nifti/src/parser.ts`, `packages/parser-nifti/src/types.ts`, `packages/core/src/types.ts`
 
 ---
 
@@ -341,8 +345,8 @@ Phase 6 (Oblique MPR)           ← 依赖 Phase 5 完成
 | R-11 | High | sform_inv 命名混乱 | Phase 2 | ✅ 已完成 |
 | R-12 | Medium | loadImageData 选项未实现 | Phase 1 |
 | R-13 | Medium | TextureManager 无 dispose | Phase 1 |
-| R-14 | Medium | zero-size 容器无限 RAF | Phase 3 |
-| R-15 | Medium | 4D dimensions 丢失第 4 维 | Phase 3 |
+| R-14 | Medium | zero-size 容器无限 RAF | Phase 3 | ✅ 已完成 |
+| R-15 | Medium | 4D dimensions 丢失第 4 维 | Phase 3 | ✅ 已完成（检测+警告） |
 | R-16 | Medium | Demo 加载失败静默 | Phase 4 |
 | R-17 | Medium | 无加载状态指示器 | Phase 4 |
 | R-18 | Medium | Resize handler 闭包陷阱 | Phase 4 |
