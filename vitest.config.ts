@@ -23,6 +23,7 @@ export default defineConfig({
       '@jsmedgl/core': resolve(__dirname, 'packages/core/src'),
       '@jsmedgl/parser-nifti': resolve(__dirname, 'packages/parser-nifti/src'),
       '@jsmedgl/react': resolve(__dirname, 'packages/react/src'),
+      '@jsmedgl/renderer-2d': resolve(__dirname, 'packages/renderer-2d/src'),
     },
   },
 });
