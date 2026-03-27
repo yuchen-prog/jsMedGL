@@ -204,23 +204,22 @@ if (byteSize === 0) {
 
 ## Phase 4: React/Demo 交互改进
 
-### 4.1 修复 Demo 加载失败静默
+### 4.1 修复 Demo 加载失败静默 ✅
 
 **问题**: `fetch` 和 `parseNifti` 的错误被 `.catch(() => {})` 完全吞掉。
 
 **修复**:
-```typescript
-.catch((err) => {
-  console.error('Failed to load demo file:', err);
-  setLoadError('Failed to load demo file. Please try loading a file manually.');
-});
-```
+1. Demo 文件 fetch 错误时用 `console.error` 打印并设置 `loadError` 提示用户手动加载
+2. `loadVolume` 增加了 `setIsLoading` 状态管理
+3. 添加了 `LoadingSpinner` 组件，loading 期间在 viewer area 显示旋转动画
 
-### 4.2 添加加载状态指示器
+**修改文件**: `apps/demo/src/App.tsx`, `apps/demo/src/styles.css`
+
+### 4.2 添加加载状态指示器 ✅
 
 **问题**: 加载 117MB 文件时无任何进度反馈，UI 看起来像冻结。
 
-**修复**: 在 `App.tsx` 中添加 `isLoading` state，在 `loadVolume` 期间设为 `true`，渲染时显示 spinner。
+**修复**: 在 `App.tsx` 中添加 `isLoading` state，在 `loadVolume` 和 demo fetch 期间设为 `true`，渲染时在 viewer area 显示 spinner。
 
 ### 4.3 改进 Resize Handler
 
@@ -228,17 +227,21 @@ if (byteSize === 0) {
 
 **修复**: 在 resize effect 中同时监听 `crosshair` 变化，或将 crosshair position 作为参数传入而非从闭包读取。
 
-### 4.4 修复十字线圆点颜色
+### 4.4 修复十字线圆点颜色 ✅
 
 **问题**: 圆点使用垂直轴颜色（sagittal 色），应该用自身 orientation 颜色或白色区分。
 
-**修复**: 圆点改用 `ORIENTATION_COLORS[orientation]` 或白色。
+**修复**: 圆点改用 `ORIENTATION_COLORS[orientation]`（即 axial=蓝、coronal=绿、sagittal=橙）。
 
-### 4.5 侧边栏响应式
+**修改文件**: `apps/demo/src/App.tsx`
+
+### 4.5 侧边栏响应式 ✅
 
 **问题**: 固定 `width: 260px`，窄屏下溢出。
 
-**修复**: 添加媒体查询，窄屏下改为 `width: 200px` 或更小。
+**修复**: 添加 `@media (max-width: 768px)` 媒体查询，窄屏下侧边栏宽度改为 `200px`。
+
+**修改文件**: `apps/demo/src/styles.css`
 
 ### 4.6 改进 ESLint 抑制注释
 
@@ -347,11 +350,11 @@ Phase 6 (Oblique MPR)           ← 依赖 Phase 5 完成
 | R-13 | Medium | TextureManager 无 dispose | Phase 1 |
 | R-14 | Medium | zero-size 容器无限 RAF | Phase 3 | ✅ 已完成 |
 | R-15 | Medium | 4D dimensions 丢失第 4 维 | Phase 3 | ✅ 已完成（检测+警告） |
-| R-16 | Medium | Demo 加载失败静默 | Phase 4 |
-| R-17 | Medium | 无加载状态指示器 | Phase 4 |
+| R-16 | Medium | Demo 加载失败静默 | Phase 4 | ✅ 已完成 |
+| R-17 | Medium | 无加载状态指示器 | Phase 4 | ✅ 已完成 |
 | R-18 | Medium | Resize handler 闭包陷阱 | Phase 4 |
-| R-19 | Low | 十字线圆点颜色错误 | Phase 4 |
-| R-20 | Low | 侧边栏无响应式 | Phase 4 |
+| R-19 | Low | 十字线圆点颜色错误 | Phase 4 | ✅ 已完成 |
+| R-20 | Low | 侧边栏无响应式 | Phase 4 | ✅ 已完成 |
 | R-21 | Low | 坐标系注释与实现不符 | Phase 3 |
 | R-22 | Low | quaternion 归一化未校验 | Phase 2 | ✅ 已完成 |
 | R-23 | Low | 弱测试断言 | Phase 5 |

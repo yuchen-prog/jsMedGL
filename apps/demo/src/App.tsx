@@ -326,7 +326,7 @@ const SliceViewer = memo(function SliceViewer({
         <div className="crosshair-overlay">
           <div ref={hLineRef} className="crosshair-line crosshair-line--h" style={{ background: colors.h }} />
           <div ref={vLineRef} className="crosshair-line crosshair-line--v" style={{ background: colors.v }} />
-          <div ref={dotRef} className="crosshair-dot" style={{ background: colors.v }} />
+          <div ref={dotRef} className="crosshair-dot" style={{ background: ORIENTATION_COLORS[orientation] }} />
         </div>
       )}
       <OrientationLabels orientation={orientation} />
@@ -563,6 +563,17 @@ function DropOverlay({ isDragOver }: { isDragOver: boolean }) {
   );
 }
 
+// ─── Loading Spinner ─────────────────────────────────────────────────────────
+
+function LoadingSpinner() {
+  return (
+    <div className="loading-spinner">
+      <div className="loading-spinner__ring" />
+      <div className="loading-spinner__text">Loading...</div>
+    </div>
+  );
+}
+
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -570,6 +581,7 @@ export default function App() {
   const [isMPRMode, setIsMPRMode] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [windowLevel, setWindowLevel] = useState<WindowLevelState>({ window: 255, level: 128 });
   const [crosshair, setCrosshair] = useState<CrosshairPosition | null>(null);
 
@@ -591,6 +603,7 @@ export default function App() {
   // ── File loading ──────────────────────────────────────────────────────────
   const loadVolume = useCallback(async (file: File) => {
     try {
+      setIsLoading(true);
       setLoadError(null);
       const buffer = await file.arrayBuffer();
       const vol = await parseNifti(buffer);
@@ -598,6 +611,8 @@ export default function App() {
       setIsMPRMode(false);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
@@ -622,11 +637,22 @@ export default function App() {
 
   // ── Auto-load demo file ──────────────────────────────────────────────────
   useEffect(() => {
+    setIsLoading(true);
     fetch('/fixtures/img-3d.nii.gz')
-      .then((res) => (!res.ok ? null : res.arrayBuffer()))
-      .then((buf) => (!buf ? null : parseNifti(buf)))
-      .then((vol) => { if (vol) setVolume(vol); })
-      .catch(() => {});
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        return res.arrayBuffer();
+      })
+      .then((buf) => parseNifti(buf))
+      .then((vol) => {
+        setVolume(vol);
+        setIsLoading(false);
+      })
+      .catch((err) => {
+        console.error('Failed to load demo file:', err);
+        setLoadError('Failed to load demo file. Please try loading a file manually.');
+        setIsLoading(false);
+      });
   }, []);
 
   // ── Toggle MPR ───────────────────────────────────────────────────────────
@@ -650,7 +676,11 @@ export default function App() {
             <ViewControls windowLevel={windowLevel} onWindowLevelChange={setWindowLevel} />
           )}
         </aside>
-        {volume && crosshair ? (
+        {isLoading ? (
+          <div className="viewer-area">
+            <LoadingSpinner />
+          </div>
+        ) : volume && crosshair ? (
           isMPRMode ? (
             <MPRViewer
               volume={volume}
