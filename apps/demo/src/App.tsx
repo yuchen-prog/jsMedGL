@@ -2,8 +2,16 @@
 import { memo, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { parseNifti } from '@jsmedgl/parser-nifti';
 import { createWebGLSliceView, type WebGLSliceView } from '@jsmedgl/renderer-2d';
+import {
+  createObliquePlane,
+  createObliqueExtractor,
+  quaternionFromAxisAngle,
+  type ObliquePlane,
+  type ObliqueExtractor as ObliqueExtractorType,
+} from '@jsmedgl/renderer-2d';
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
 import type { SliceOrientation, CrosshairPosition } from '@jsmedgl/renderer-2d';
+import type { ObliquePlaneComputed } from '@jsmedgl/renderer-2d';
 import './styles.css';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -91,8 +99,8 @@ function crosshairToPixels(
 // ─── Orientation Labels ──────────────────────────────────────────────────────
 
 const ORIENTATION_LABELS: Record<SliceOrientation, { top: string; bottom: string; left: string; right: string }> = {
-  axial: { top: 'A', bottom: 'P', left: 'L', right: 'R' },
-  coronal: { top: 'S', bottom: 'I', left: 'L', right: 'R' },
+  axial: { top: 'A', bottom: 'P', left: 'R', right: 'L' },
+  coronal: { top: 'S', bottom: 'I', left: 'R', right: 'L' },
   sagittal: { top: 'S', bottom: 'I', left: 'A', right: 'P' },
 };
 
@@ -343,6 +351,193 @@ const SliceViewer = memo(function SliceViewer({
   );
 });
 
+// ─── Oblique Slice Viewer ────────────────────────────────────────────────────
+
+interface ObliqueSliceViewerProps {
+  volume: NiftiVolume;
+  orientation: SliceOrientation;
+  windowLevel: WindowLevelState;
+  /** Shared extractor (with pre-normalized data) */
+  extractor?: ObliqueExtractorType;
+}
+
+/**
+ * Single oblique slice viewer.
+ * Renders an oblique slice using ObliquePlane + ObliqueExtractor + WebGLSliceView.
+ * Scroll wheel adjusts the plane's focal point along its normal axis.
+ */
+const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
+  volume,
+  orientation,
+  windowLevel,
+  extractor,
+}: ObliqueSliceViewerProps & { extractor: ObliqueExtractorType }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<WebGLSliceView | null>(null);
+  const planeRef = useRef<ObliquePlane | null>(null);
+
+  // ── Create plane and view (extractor shared from parent) ──────────────
+  useEffect(() => {
+    const wrapper = canvasWrapperRef.current;
+    if (!wrapper) return;
+
+    const plane = createObliquePlane({ volume, baseOrientation: orientation });
+    planeRef.current = plane;
+
+    const computed = plane.getComputed();
+    const view = createWebGLSliceView(volume, {
+      container: wrapper,
+      orientation,
+      initialWindowLevel: { window: windowLevel.window, level: windowLevel.level },
+    });
+
+    view.setObliquePlane(computed, extractor);
+    viewRef.current = view;
+
+    return () => {
+      view.dispose();
+      viewRef.current = null;
+      planeRef.current = null;
+    };
+  }, [volume, orientation, extractor]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Apply window/level ────────────────────────────────────────────────
+  useEffect(() => {
+    viewRef.current?.setWindowLevel(windowLevel.window, windowLevel.level);
+  }, [windowLevel.window, windowLevel.level]);
+
+  // ── Scroll wheel: move focal point along normal ───────────────────────
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const plane = planeRef.current;
+    const view = viewRef.current;
+    if (!plane || !view) return;
+
+    const ijk = plane.getFocalPointIjk();
+    const step = e.deltaY > 0 ? 1 : -1;
+
+    let newIjk = { ...ijk };
+    switch (orientation) {
+      case 'axial':    newIjk.k += step; break;
+      case 'coronal':  newIjk.j += step; break;
+      case 'sagittal': newIjk.i += step; break;
+    }
+
+    const dims = volume.dimensions;
+    newIjk.i = Math.max(0, Math.min(dims[0] - 1, newIjk.i));
+    newIjk.j = Math.max(0, Math.min(dims[1] - 1, newIjk.j));
+    newIjk.k = Math.max(0, Math.min(dims[2] - 1, newIjk.k));
+
+    plane.setFocalPointIjk(newIjk);
+    view.setObliquePlane(plane.getComputed(), extractor);
+  }, [orientation, volume.dimensions, extractor]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="slice-viewer"
+      style={{ border: `1px solid ${ORIENTATION_COLORS[orientation]}` }}
+    >
+      <div ref={canvasWrapperRef} className="canvas-wrapper" />
+      <OrientationLabels orientation={orientation} />
+      <div
+        style={{ position: 'absolute', inset: 0, cursor: 'crosshair' }}
+        onWheel={handleWheel}
+      />
+    </div>
+  );
+});
+
+// ─── Oblique MPR Viewer ────────────────────────────────────────────────────
+
+interface ObliqueMPRViewerProps {
+  volume: NiftiVolume;
+  windowLevel: WindowLevelState;
+}
+
+function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
+  // Use state so React re-renders when extractor is ready
+  const [extractor, setExtractor] = useState<ObliqueExtractorType | null>(null);
+  // Keep a ref for cleanup
+  const sharedViewRef = useRef<WebGLSliceView | null>(null);
+
+  useEffect(() => {
+    // Create one hidden slice extractor just to get normalizedData
+    const container = document.createElement('div');
+    container.style.display = 'none';
+    document.body.appendChild(container);
+
+    const view = createWebGLSliceView(volume, {
+      container,
+      orientation: 'axial',
+      initialWindowLevel: { window: 255, level: 128 },
+    });
+    sharedViewRef.current = view;
+
+    const normalizedData = view.getNormalizedData();
+    const ext = createObliqueExtractor({ volume, normalizedData });
+
+    // Debug: test extraction
+    const testPlane = createObliquePlane({ volume, baseOrientation: 'axial' });
+    const computed = testPlane.getComputed();
+    const testResult = ext.extractSlice(computed);
+    console.log('[ObliqueMPRViewer] normalizedData length:', normalizedData.length);
+    console.log('[ObliqueMPRViewer] plane computed:', computed.width, 'x', computed.height);
+    console.log('[ObliqueMPRViewer] extractSlice result:', testResult.width, 'x', testResult.height, 'nonZero:', testResult.data.filter(v => v > 0).length);
+
+    // Use setState so children re-render with the extractor
+    setExtractor(ext);
+
+    return () => {
+      view.dispose();
+      container.remove();
+      sharedViewRef.current = null;
+      setExtractor(null);
+    };
+  }, [volume]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="viewer-mpr">
+      <div className="mpr-left">
+        {extractor ? (
+          <ObliqueSliceViewer
+            volume={volume}
+            orientation="axial"
+            windowLevel={windowLevel}
+            extractor={extractor}
+          />
+        ) : <LoadingSpinner />}
+        <div className="mpr-label">Axial (Oblique)</div>
+      </div>
+      <div className="mpr-right">
+        <div className="mpr-right-top">
+          {extractor ? (
+            <ObliqueSliceViewer
+              volume={volume}
+              orientation="coronal"
+              windowLevel={windowLevel}
+              extractor={extractor}
+            />
+          ) : <LoadingSpinner />}
+          <div className="mpr-label">Coronal (Oblique)</div>
+        </div>
+        <div className="mpr-right-bottom">
+          {extractor ? (
+            <ObliqueSliceViewer
+              volume={volume}
+              orientation="sagittal"
+              windowLevel={windowLevel}
+              extractor={extractor}
+            />
+          ) : <LoadingSpinner />}
+          <div className="mpr-label">Sagittal (Oblique)</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MPR Viewer ──────────────────────────────────────────────────────────────
 
 interface MPRViewerProps {
@@ -435,27 +630,34 @@ function SingleViewer({ volume, crosshair, windowLevel, onCrosshairChange }: Sin
 
 // ─── Header ─────────────────────────────────────────────────────────────────
 
-function Header({ isMPRMode, mprEnabled, crosshair, onToggleMPR }: {
-  isMPRMode: boolean;
+function Header({ viewMode, mprEnabled, crosshair, onViewModeChange }: {
+  viewMode: 'single' | 'mpr' | 'oblique';
   mprEnabled: boolean;
   crosshair: CrosshairPosition | null;
-  onToggleMPR: () => void;
+  onViewModeChange: (mode: 'single' | 'mpr' | 'oblique') => void;
 }) {
   return (
     <header className="header">
       <span className="header__title">jsMed (WebGL)</span>
       <div className="header__controls">
-        {crosshair && (
+        {crosshair && viewMode !== 'oblique' && (
           <span className="header__coords">
             I:{crosshair.i} J:{crosshair.j} K:{crosshair.k}
           </span>
         )}
         <button
-          className={`mpr-btn${isMPRMode ? ' active' : ''}`}
+          className={`mpr-btn${viewMode === 'mpr' ? ' active' : ''}`}
           disabled={!mprEnabled}
-          onClick={onToggleMPR}
+          onClick={() => onViewModeChange(viewMode === 'mpr' ? 'single' : 'mpr')}
         >
-          {isMPRMode ? 'Exit MPR' : 'MPR Mode'}
+          {viewMode === 'mpr' ? 'Exit MPR' : 'MPR Mode'}
+        </button>
+        <button
+          className={`mpr-btn oblique-btn${viewMode === 'oblique' ? ' active' : ''}`}
+          disabled={!mprEnabled}
+          onClick={() => onViewModeChange(viewMode === 'oblique' ? 'single' : 'oblique')}
+        >
+          {viewMode === 'oblique' ? 'Exit Oblique' : 'Oblique'}
         </button>
         <span className="header__version">v0.1.0</span>
       </div>
@@ -578,10 +780,12 @@ function LoadingSpinner() {
 
 export default function App() {
   const [volume, setVolume] = useState<NiftiVolume | null>(null);
-  const [isMPRMode, setIsMPRMode] = useState(false);
+  const [viewMode, setViewMode] = useState<'single' | 'mpr' | 'oblique'>('single');
   const [isDragOver, setIsDragOver] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Guard against React StrictMode double-invocation in development
+  const autoLoadRan = useRef(false);
   const [windowLevel, setWindowLevel] = useState<WindowLevelState>({ window: 255, level: 128 });
   const [crosshair, setCrosshair] = useState<CrosshairPosition | null>(null);
 
@@ -608,7 +812,7 @@ export default function App() {
       const buffer = await file.arrayBuffer();
       const vol = await parseNifti(buffer);
       setVolume(vol);
-      setIsMPRMode(false);
+      setViewMode('single');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -637,6 +841,9 @@ export default function App() {
 
   // ── Auto-load demo file ──────────────────────────────────────────────────
   useEffect(() => {
+    if (autoLoadRan.current) return;
+    autoLoadRan.current = true;
+
     setIsLoading(true);
     fetch('/fixtures/img-3d.nii.gz')
       .then((res) => {
@@ -655,18 +862,13 @@ export default function App() {
       });
   }, []);
 
-  // ── Toggle MPR ───────────────────────────────────────────────────────────
-  const toggleMPR = useCallback(() => {
-    setIsMPRMode((prev) => !prev);
-  }, []);
-
   return (
     <div className="app">
       <Header
-        isMPRMode={isMPRMode}
+        viewMode={viewMode}
         mprEnabled={volume !== null}
         crosshair={crosshair}
-        onToggleMPR={toggleMPR}
+        onViewModeChange={setViewMode}
       />
       <div className="body">
         <aside className="sidebar">
@@ -680,22 +882,24 @@ export default function App() {
           <div className="viewer-area">
             <LoadingSpinner />
           </div>
-        ) : volume && crosshair ? (
-          isMPRMode ? (
+        ) : volume ? (
+          viewMode === 'oblique' ? (
+            <ObliqueMPRViewer volume={volume} windowLevel={windowLevel} />
+          ) : viewMode === 'mpr' && crosshair ? (
             <MPRViewer
               volume={volume}
               crosshair={crosshair}
               windowLevel={windowLevel}
               onCrosshairChange={setCrosshair}
             />
-          ) : (
+          ) : crosshair ? (
             <SingleViewer
               volume={volume}
               crosshair={crosshair}
               windowLevel={windowLevel}
               onCrosshairChange={setCrosshair}
             />
-          )
+          ) : null
         ) : (
           <div
             className="viewer-area"

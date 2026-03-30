@@ -62,6 +62,23 @@
   background: #059669;
 }
 
+/* ─── Oblique Button ─────────────────────────────────────────────────────── */
+.oblique-btn {
+  background: #8b5cf6;
+}
+
+.oblique-btn:hover:not(:disabled) {
+  background: #7c3aed;
+}
+
+.oblique-btn.active {
+  background: #f97316;
+}
+
+.oblique-btn.active:hover {
+  background: #ea580c;
+}
+
 /* ─── Body ─────────────────────────────────────────────────────────────── */
 .body {
   flex: 1;
