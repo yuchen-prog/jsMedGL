@@ -4,47 +4,63 @@ import { vec3, quat, mat3 } from 'gl-matrix';
 import type { ObliqueBasis, SliceOrientation } from './types';
 
 /**
- * 基准方向的初始基向量（RAS 空间）
- *
- * 这些基向量与现有正交 MPR 的渲染方向一致：
- *
- * - Axial:    法向量 +K（从脚到头），U=+I（左到右），V=-J（后到前，渲染时 Y 反转）
- * - Coronal:  法向量 -J（从前到后），U=+I（左到右），V=+K（从脚到头）
- * - Sagittal: 法向量 +I（从右到左），U=-J（后到前），V=+K（从脚到头）
+ * 从 affine 矩阵中提取第 col 列的前三个元素并归一化
  */
-export function getBasisForOrientation(orientation: SliceOrientation): ObliqueBasis {
+function affineColumn(affine: number[], col: number): [number, number, number] {
+  const x = affine[col];
+  const y = affine[4 + col];
+  const z = affine[8 + col];
+  const len = Math.sqrt(x * x + y * y + z * z);
+  if (len < 1e-10) {
+    throw new Error(`Affine column ${col} has zero length`);
+  }
+  return [x / len, y / len, z / len];
+}
+
+/**
+ * 基准方向的初始基向量（RAS 空间），根据 affine 矩阵动态计算。
+ *
+ * 正交 slice-extractor 直接操作 IJK 索引，而 oblique 经过 RAS 中转：
+ *   pixel(u,v) → RAS → IJK
+ * 因此 uAxis/vAxis 必须取 affine 列向量（或其负值），
+ * 保证 RAS→IJK 映射与正交渲染的 IJK 遍历方向一致。
+ *
+ * 规则（与正交 extractSliceData 一一对应）：
+ * - Axial:    uAxis = affine_col0/|col0|  (texture X → I+)
+ *             vAxis = -affine_col1/|col1|  (J reversal: top→J_max)
+ * - Coronal:  uAxis = affine_col0/|col0|  (texture X → I+)
+ *             vAxis = affine_col2/|col2|   (texture Y → K+)
+ * - Sagittal: uAxis = affine_col1/|col1|  (texture X → J+)
+ *             vAxis = affine_col2/|col2|   (texture Y → K+)
+ */
+export function getBasisForOrientation(
+  orientation: SliceOrientation,
+  affine: number[]
+): ObliqueBasis {
+  const col0 = affineColumn(affine, 0); // I 方向在 RAS 中的单位向量
+  const col1 = affineColumn(affine, 1); // J 方向在 RAS 中的单位向量
+  const col2 = affineColumn(affine, 2); // K 方向在 RAS 中的单位向量
+
   switch (orientation) {
     case 'axial':
-      // Axial 切面：XY 平面（I-J 平面），法向量指向 +K
-      // 现有实现：texture X → I, texture Y → J (reversed)
-      // U 轴对应 texture X → +I
-      // V 轴对应 texture Y（反转后）→ -J（因为 J 反转使 A 在顶部）
       return {
-        normal: [0, 0, 1],    // +K
-        uAxis: [1, 0, 0],     // +I
-        vAxis: [0, -1, 0],    // -J
+        normal: col2,                              // 法向量 = K 方向
+        uAxis: col0,                               // texture X → I+
+        vAxis: [-col1[0], -col1[1], -col1[2]],     // J reversal: top→J_max
       };
 
     case 'coronal':
-      // Coronal 切面：XZ 平面（I-K 平面），法向量指向 -J
-      // 现有实现：texture X → I, texture Y → K
-      // U 轴对应 texture X → +I
-      // V 轴对应 texture Y → +K
       return {
-        normal: [0, -1, 0],   // -J
-        uAxis: [1, 0, 0],     // +I
-        vAxis: [0, 0, 1],     // +K
+        normal: [-col1[0], -col1[1], -col1[2]],    // 法向量 = -J 方向
+        uAxis: col0,                               // texture X → I+
+        vAxis: col2,                               // texture Y → K+
       };
 
     case 'sagittal':
-      // Sagittal 切面：YZ 平面（J-K 平面），法向量指向 +I
-      // 现有实现：texture X → J, texture Y → K
-      // U 轴对应 texture X → -J（Anterior 在左，Posterior 在右）
-      // V 轴对应 texture Y → +K
       return {
-        normal: [1, 0, 0],    // +I
-        uAxis: [0, -1, 0],    // -J
-        vAxis: [0, 0, 1],     // +K
+        normal: col0,                              // 法向量 = I 方向
+        uAxis: col1,                               // texture X → J+
+        vAxis: col2,                               // texture Y → K+
       };
   }
   // TypeScript exhaustiveness check
