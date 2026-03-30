@@ -70,59 +70,89 @@ function createMockVolume(
 
 // ─── Tests ────────────────────────────────────────────────────────────────────────
 
+// Identity affine for unit tests (IJK=RAS, no negative axes)
+const IDENTITY_AFFINE = [
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+];
+
+// Negative-diagonal affine (common in NIfTI: RAS convention with flipped I and J)
+const NEGATIVE_AFFINE = [
+  -1, 0, 0, 0,
+  0, -1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+];
+
 describe('ObliquePlane — Phase 1: 基础数学层', () => {
 
   // ── 1.1 基准方向基向量 ──────────────────────────────────────────────────────
 
   describe('基准方向基向量 (getBasisForOrientation)', () => {
-    it('axial 基向量应归一化且正交', () => {
-      const basis = getBasisForOrientation('axial');
+    it('axial 基向量应归一化且正交 (identity affine)', () => {
+      const basis = getBasisForOrientation('axial', IDENTITY_AFFINE);
       expect(validateBasis(basis)).toBe(true);
     });
 
-    it('coronal 基向量应归一化且正交', () => {
-      const basis = getBasisForOrientation('coronal');
+    it('coronal 基向量应归一化且正交 (identity affine)', () => {
+      const basis = getBasisForOrientation('coronal', IDENTITY_AFFINE);
       expect(validateBasis(basis)).toBe(true);
     });
 
-    it('sagittal 基向量应归一化且正交', () => {
-      const basis = getBasisForOrientation('sagittal');
+    it('sagittal 基向量应归一化且正交 (identity affine)', () => {
+      const basis = getBasisForOrientation('sagittal', IDENTITY_AFFINE);
       expect(validateBasis(basis)).toBe(true);
     });
 
-    it('axial 法向量应为 +K', () => {
-      const { normal } = getBasisForOrientation('axial');
-      expect(normal[0]).toBeCloseTo(0, 5);
-      expect(normal[1]).toBeCloseTo(0, 5);
-      expect(normal[2]).toBeCloseTo(1, 5);
+    it('axial 基向量应归一化且正交 (negative affine)', () => {
+      const basis = getBasisForOrientation('axial', NEGATIVE_AFFINE);
+      expect(validateBasis(basis)).toBe(true);
     });
 
-    it('coronal 法向量应为 -J', () => {
-      const { normal } = getBasisForOrientation('coronal');
-      expect(normal[0]).toBeCloseTo(0, 5);
-      expect(normal[1]).toBeCloseTo(-1, 5);
-      expect(normal[2]).toBeCloseTo(0, 5);
+    // identity affine: col0=[1,0,0], col1=[0,1,0], col2=[0,0,1]
+    it('identity affine: axial normal=+K, uAxis=+I, vAxis=-J', () => {
+      const basis = getBasisForOrientation('axial', IDENTITY_AFFINE);
+      expect(basis.normal[2]).toBeCloseTo(1, 5);
+      expect(basis.uAxis[0]).toBeCloseTo(1, 5);
+      expect(basis.vAxis[1]).toBeCloseTo(-1, 5); // -col1
     });
 
-    it('sagittal 法向量应为 +I', () => {
-      const { normal } = getBasisForOrientation('sagittal');
-      expect(normal[0]).toBeCloseTo(1, 5);
-      expect(normal[1]).toBeCloseTo(0, 5);
-      expect(normal[2]).toBeCloseTo(0, 5);
+    it('identity affine: coronal normal=-J, uAxis=+I, vAxis=+K', () => {
+      const basis = getBasisForOrientation('coronal', IDENTITY_AFFINE);
+      expect(basis.normal[1]).toBeCloseTo(-1, 5);
+      expect(basis.uAxis[0]).toBeCloseTo(1, 5);
+      expect(basis.vAxis[2]).toBeCloseTo(1, 5);
     });
 
-    it('axial uAxis 应为 +I（左到右）', () => {
-      const { uAxis } = getBasisForOrientation('axial');
-      expect(uAxis[0]).toBeCloseTo(1, 5);
-      expect(uAxis[1]).toBeCloseTo(0, 5);
-      expect(uAxis[2]).toBeCloseTo(0, 5);
+    it('identity affine: sagittal normal=+I, uAxis=+J, vAxis=+K', () => {
+      const basis = getBasisForOrientation('sagittal', IDENTITY_AFFINE);
+      expect(basis.normal[0]).toBeCloseTo(1, 5);
+      expect(basis.uAxis[1]).toBeCloseTo(1, 5);
+      expect(basis.vAxis[2]).toBeCloseTo(1, 5);
     });
 
-    it('axial vAxis 应为 -J（后到前，Y 反转）', () => {
-      const { vAxis } = getBasisForOrientation('axial');
-      expect(vAxis[0]).toBeCloseTo(0, 5);
-      expect(vAxis[1]).toBeCloseTo(-1, 5);
-      expect(vAxis[2]).toBeCloseTo(0, 5);
+    // negative affine: col0=[-1,0,0], col1=[0,-1,0], col2=[0,0,1]
+    it('negative affine: axial normal=+K, uAxis=-I, vAxis=+J', () => {
+      const basis = getBasisForOrientation('axial', NEGATIVE_AFFINE);
+      expect(basis.normal[2]).toBeCloseTo(1, 5);
+      expect(basis.uAxis[0]).toBeCloseTo(-1, 5); // col0/|col0| = [-1,0,0]
+      expect(basis.vAxis[1]).toBeCloseTo(1, 5);  // -col1 = [0,+1,0]
+    });
+
+    it('negative affine: coronal normal=+J, uAxis=-I, vAxis=+K', () => {
+      const basis = getBasisForOrientation('coronal', NEGATIVE_AFFINE);
+      expect(basis.normal[1]).toBeCloseTo(1, 5);  // -col1 = [0,+1,0]
+      expect(basis.uAxis[0]).toBeCloseTo(-1, 5);  // col0 = [-1,0,0]
+      expect(basis.vAxis[2]).toBeCloseTo(1, 5);   // col2 = [0,0,1]
+    });
+
+    it('negative affine: sagittal normal=-I, uAxis=-J, vAxis=+K', () => {
+      const basis = getBasisForOrientation('sagittal', NEGATIVE_AFFINE);
+      expect(basis.normal[0]).toBeCloseTo(-1, 5); // col0 = [-1,0,0]
+      expect(basis.uAxis[1]).toBeCloseTo(-1, 5);  // col1 = [0,-1,0]
+      expect(basis.vAxis[2]).toBeCloseTo(1, 5);   // col2 = [0,0,1]
     });
   });
 
@@ -164,7 +194,7 @@ describe('ObliquePlane — Phase 1: 基础数学层', () => {
 
   describe('四元数旋转 (rotateBasis / quaternionFromAxisAngle)', () => {
     it('绕 Z 轴旋转 90° 后基向量仍正交归一化', () => {
-      const basis = getBasisForOrientation('axial');
+      const basis = getBasisForOrientation('axial', IDENTITY_AFFINE);
       const q = quaternionFromAxisAngle([0, 0, 1], Math.PI / 2);
       const rotated = rotateBasis(basis, q);
 
@@ -172,7 +202,7 @@ describe('ObliquePlane — Phase 1: 基础数学层', () => {
     });
 
     it('绕 X 轴旋转 90° 后基向量仍正交归一化', () => {
-      const basis = getBasisForOrientation('axial');
+      const basis = getBasisForOrientation('axial', IDENTITY_AFFINE);
       const q = quaternionFromAxisAngle([1, 0, 0], Math.PI / 2);
       const rotated = rotateBasis(basis, q);
 
@@ -180,7 +210,7 @@ describe('ObliquePlane — Phase 1: 基础数学层', () => {
     });
 
     it('四元数组合旋转应等于依次应用', () => {
-      const basis = getBasisForOrientation('axial');
+      const basis = getBasisForOrientation('axial', IDENTITY_AFFINE);
       const q1 = quaternionFromAxisAngle([0, 0, 1], Math.PI / 4);
       const q2 = quaternionFromAxisAngle([0, 0, 1], Math.PI / 4);
       const combined = multiplyQuaternions(q2, q1);  // 注意顺序：q2 * q1
@@ -195,7 +225,7 @@ describe('ObliquePlane — Phase 1: 基础数学层', () => {
     });
 
     it('单位四元数不应改变基向量', () => {
-      const basis = getBasisForOrientation('coronal');
+      const basis = getBasisForOrientation('coronal', IDENTITY_AFFINE);
       const identity = quat.create();
       const rotated = rotateBasis(basis, identity);
 
@@ -302,7 +332,7 @@ describe('ObliquePlane — Phase 1: 基础数学层', () => {
         0, 0, 0, 1,
       ];
       const center: [number, number, number] = [0, 0, 0];
-      const basis = getBasisForOrientation('axial');
+      const basis = getBasisForOrientation('axial', affine);
 
       const { width, height } = projectBoundingBox(dims, affine, basis, center);
 
@@ -320,8 +350,8 @@ describe('ObliquePlane — Phase 1: 基础数学层', () => {
       ];
       const center: [number, number, number] = [50, 100, 75];
 
-      const axialResult = projectBoundingBox(dims, affine, getBasisForOrientation('axial'), center);
-      const coronalResult = projectBoundingBox(dims, affine, getBasisForOrientation('coronal'), center);
+      const axialResult = projectBoundingBox(dims, affine, getBasisForOrientation('axial', affine), center);
+      const coronalResult = projectBoundingBox(dims, affine, getBasisForOrientation('coronal', affine), center);
 
       // Axial: width = I 范围, height = J 范围
       // Coronal: width = I 范围, height = K 范围
@@ -473,7 +503,7 @@ describe('ObliquePlane — Phase 1: 基础数学层', () => {
 
   describe('validateBasis', () => {
     it('对有效基向量应返回 true', () => {
-      const basis = getBasisForOrientation('axial');
+      const basis = getBasisForOrientation('axial', IDENTITY_AFFINE);
       expect(validateBasis(basis)).toBe(true);
     });
 

@@ -2,6 +2,8 @@
 
 export * from './types';
 export { ObliquePlane, createObliquePlane } from './ObliquePlane';
+export { ObliqueExtractor, createObliqueExtractor } from './ObliqueExtractor';
+export type { ObliqueExtractorOptions } from './ObliqueExtractor';
 export {
   getBasisForOrientation,
   orthonormalizeBasis,

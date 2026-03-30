@@ -126,5 +126,7 @@ export interface SliceExtractor {
   setWindowLevel(windowLevel: WindowLevel): void;
   hasData(orientation: SliceOrientation, sliceIndex: number): boolean;
   findFirstSliceWithData(orientation: SliceOrientation): number;
+  /** Get pre-normalized Uint8Array [0, 255] — shared with ObliqueExtractor */
+  getNormalizedData(): Uint8Array;
   dispose(): void;
 }

@@ -30,7 +30,9 @@
       "@jsmedgl/parser-nifti": ["./packages/parser-nifti/src"],
       "@jsmedgl/parser-nifti/*": ["./packages/parser-nifti/src/*"],
       "@jsmedgl/react": ["./packages/react/src"],
-      "@jsmedgl/react/*": ["./packages/react/src/*"]
+      "@jsmedgl/react/*": ["./packages/react/src/*"],
+      "@jsmedgl/renderer-2d": ["./packages/renderer-2d/src"],
+      "@jsmedgl/renderer-2d/*": ["./packages/renderer-2d/src/*"]
     }
   }
 }

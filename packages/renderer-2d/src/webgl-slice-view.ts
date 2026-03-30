@@ -4,6 +4,8 @@
 import { createSliceExtractor, type SliceExtractor } from './slice-extractor';
 import type { SliceOrientation, WindowLevel, CrosshairPosition } from './types';
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
+import type { ObliquePlaneComputed } from './oblique/types';
+import type { ObliqueExtractor } from './oblique/ObliqueExtractor';
 
 export interface WebGLSliceViewOptions {
   container: HTMLElement;
@@ -25,6 +27,12 @@ export interface WebGLSliceView {
   mouseToIJK(localX: number, localY: number): CrosshairPosition | null;
   /** Trigger a render. Call after slice/windowLevel changes. */
   render(): void;
+  /** Set oblique plane for rendering (replaces orthogonal slice) */
+  setObliquePlane(plane: ObliquePlaneComputed, extractor: ObliqueExtractor): void;
+  /** Clear oblique mode, return to orthogonal slice rendering */
+  clearObliquePlane(): void;
+  /** Get normalized Uint8Array [0, 255] for sharing with ObliqueExtractor */
+  getNormalizedData(): Uint8Array;
   dispose(): void;
 }
 
@@ -58,6 +66,11 @@ class WebGLSliceViewImpl implements WebGLSliceView {
 
   // Cached display rect (updated on render)
   private displayRect = { x: 0, y: 0, width: 0, height: 0 };
+
+  // Oblique mode state
+  private obliquePlane: ObliquePlaneComputed | null = null;
+  private obliqueExtractor: ObliqueExtractor | null = null;
+  private obliqueTexture: WebGLTexture | null = null;
 
   constructor(volume: NiftiVolume, options: WebGLSliceViewOptions) {
     this.volume = volume;
@@ -256,7 +269,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     const containerH = this.container.offsetHeight;
 
     if (containerW === 0 || containerH === 0) {
-      // R-14: Don't schedule another RAF — return and wait for resize observer
       return;
     }
 
@@ -266,22 +278,35 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     }
 
     const gl = this.gl;
-    const { dimensions } = this.volume;
 
     let sliceW: number, sliceH: number;
-    switch (this.orientation) {
-      case 'axial':
-        sliceW = dimensions[0];
-        sliceH = dimensions[1];
-        break;
-      case 'coronal':
-        sliceW = dimensions[0];
-        sliceH = dimensions[2];
-        break;
-      case 'sagittal':
-        sliceW = dimensions[1];
-        sliceH = dimensions[2];
-        break;
+    let texture: WebGLTexture;
+
+    if (this.obliquePlane && this.obliqueExtractor) {
+      // Oblique mode: extract slice via CPU, upload as texture
+      const result = this.obliqueExtractor.extractSlice(this.obliquePlane);
+      sliceW = result.width;
+      sliceH = result.height;
+      texture = this.uploadObliqueTexture(result.data, sliceW, sliceH);
+    } else {
+      // Orthogonal mode: use WebGL slice extractor
+      const { dimensions } = this.volume;
+      switch (this.orientation) {
+        case 'axial':
+          sliceW = dimensions[0];
+          sliceH = dimensions[1];
+          break;
+        case 'coronal':
+          sliceW = dimensions[0];
+          sliceH = dimensions[2];
+          break;
+        case 'sagittal':
+          sliceW = dimensions[1];
+          sliceH = dimensions[2];
+          break;
+      }
+      const slice = this.extractor.extractSlice(this.orientation, this.sliceIndex);
+      texture = slice.texture;
     }
 
     // Calculate display area (centered, aspect ratio preserved)
@@ -299,9 +324,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    // Get the slice texture from extractor
-    const slice = this.extractor.extractSlice(this.orientation, this.sliceIndex);
-
     // Render to the display area only
     gl.viewport(drawX, drawY, drawW, drawH);
     gl.scissor(drawX, drawY, drawW, drawH);
@@ -310,9 +332,8 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     gl.useProgram(this.displayProgram);
 
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, slice.texture);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.uniform1i(this.displayUniforms.u_texture, 0);
-    // R-02: Guard against zero/negative window width to prevent division by zero in shader
     const safeWindowWidth = Math.max(1, this.windowLevel.window);
     gl.uniform1f(this.displayUniforms.u_windowWidth, safeWindowWidth);
     gl.uniform1f(this.displayUniforms.u_windowCenter, this.windowLevel.level);
@@ -325,6 +346,58 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     gl.disable(gl.SCISSOR_TEST);
+  }
+
+  /**
+   * Upload oblique slice data (Uint8Array) as a WebGL texture
+   */
+  private uploadObliqueTexture(data: Uint8Array, width: number, height: number): WebGLTexture {
+    const gl = this.gl;
+
+    // Reuse or create texture
+    if (!this.obliqueTexture) {
+      this.obliqueTexture = gl.createTexture();
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, this.obliqueTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.R8,
+      width,
+      height,
+      0,
+      gl.RED,
+      gl.UNSIGNED_BYTE,
+      data
+    );
+
+    return this.obliqueTexture;
+  }
+
+  setObliquePlane(plane: ObliquePlaneComputed, extractor: ObliqueExtractor): void {
+    this.obliquePlane = plane;
+    this.obliqueExtractor = extractor;
+    this.render();
+  }
+
+  clearObliquePlane(): void {
+    this.obliquePlane = null;
+    this.obliqueExtractor = null;
+    if (this.obliqueTexture) {
+      this.gl.deleteTexture(this.obliqueTexture);
+      this.obliqueTexture = null;
+    }
+    this.render();
+  }
+
+  getNormalizedData(): Uint8Array {
+    return this.extractor.getNormalizedData();
   }
 
   setSliceIndex(index: number): void {
@@ -355,6 +428,11 @@ class WebGLSliceViewImpl implements WebGLSliceView {
 
   dispose(): void {
     this.extractor.dispose();
+
+    if (this.obliqueTexture) {
+      this.gl.deleteTexture(this.obliqueTexture);
+      this.obliqueTexture = null;
+    }
 
     if (this.displayProgram) {
       this.gl.deleteProgram(this.displayProgram);

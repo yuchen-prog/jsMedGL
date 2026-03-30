@@ -13,3 +13,20 @@ export type {
 export { createSliceExtractor } from './slice-extractor';
 export { createWebGLSliceView } from './webgl-slice-view';
 export type { WebGLSliceView, WebGLSliceViewOptions } from './webgl-slice-view';
+
+// Oblique MPR
+export {
+  ObliquePlane,
+  createObliquePlane,
+  ObliqueExtractor,
+  createObliqueExtractor,
+} from './oblique';
+export type {
+  ObliqueBasis,
+  ObliquePlaneComputed,
+  ObliqueMPRState,
+  ObliquePlaneOptions,
+  Line3D,
+  RotationDelta,
+  ObliqueExtractorOptions,
+} from './oblique';

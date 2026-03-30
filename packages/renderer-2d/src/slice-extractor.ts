@@ -294,6 +294,11 @@ class SliceExtractorImpl implements SliceExtractor {
     return 0;
   }
 
+  /** Get pre-normalized Uint8Array [0, 255] — shared with ObliqueExtractor to avoid re-normalization */
+  getNormalizedData(): Uint8Array {
+    return this.normalizedData;
+  }
+
   dispose(): void {
     const gl = this.gl;
 

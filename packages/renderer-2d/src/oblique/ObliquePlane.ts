@@ -67,7 +67,7 @@ export class ObliquePlane {
     quat.normalize(this.rotation, this.rotation);
 
     // 获取基准基向量并应用旋转
-    const baseBasis = getBasisForOrientation(this.baseOrientation);
+    const baseBasis = getBasisForOrientation(this.baseOrientation, this.affine);
     this.currentBasis = rotateBasis(baseBasis, this.rotation);
 
     // 计算输出尺寸
@@ -81,7 +81,7 @@ export class ObliquePlane {
     quat.copy(this.rotation, q);
     quat.normalize(this.rotation, this.rotation);
 
-    const baseBasis = getBasisForOrientation(this.baseOrientation);
+    const baseBasis = getBasisForOrientation(this.baseOrientation, this.affine);
     this.currentBasis = rotateBasis(baseBasis, this.rotation);
     this.updateComputed();
   }
@@ -93,7 +93,7 @@ export class ObliquePlane {
     quat.multiply(this.rotation, delta, this.rotation);
     quat.normalize(this.rotation, this.rotation);
 
-    const baseBasis = getBasisForOrientation(this.baseOrientation);
+    const baseBasis = getBasisForOrientation(this.baseOrientation, this.affine);
     this.currentBasis = rotateBasis(baseBasis, this.rotation);
     this.updateComputed();
   }
