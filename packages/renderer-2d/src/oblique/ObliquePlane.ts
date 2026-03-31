@@ -259,8 +259,8 @@ export class ObliquePlane {
 
     // 计算交线与体积边界框的两个交点
     // 简化：返回穿过焦点的线段
-    const direction = result.direction;
-    const point = result.point;
+    const direction: [number, number, number] = [result.direction[0], result.direction[1], result.direction[2]];
+    const point: [number, number, number] = [result.point[0], result.point[1], result.point[2]];
 
     // 找到线段与体积边界框的交点
     const tValues = this.intersectLineWithBoundingBox(point, direction);
@@ -303,26 +303,55 @@ export class ObliquePlane {
   }
 
   /**
-   * 计算直线与体积边界框的交点
+   * 计算直线与体积边界框的交点（全部在 RAS 空间）
    *
    * 使用参数方程：p(t) = origin + t * direction
+   * 注意：origin 和 direction 是 RAS 坐标，边界框也在 RAS 空间（由 IJK 角点经 affine 变换得到）
+   * direction 必须是单位向量
    * 返回进入和离开边界框的 t 值
    */
   private intersectLineWithBoundingBox(
-    origin: vec3,
-    direction: vec3
+    origin: [number, number, number],
+    direction: [number, number, number]
   ): { tMin: number; tMax: number } | null {
-    const dims = this.volume.dimensions;
+    const dims = this.volume.dimensions as [number, number, number];
 
-    // 对于每个轴，计算 t 的范围
+    // Compute RAS bounds from the 8 IJK corners
+    const corners: [number, number, number][] = [
+      [0, 0, 0],
+      [dims[0] - 1, 0, 0],
+      [0, dims[1] - 1, 0],
+      [0, 0, dims[2] - 1],
+      [dims[0] - 1, dims[1] - 1, 0],
+      [dims[0] - 1, 0, dims[2] - 1],
+      [0, dims[1] - 1, dims[2] - 1],
+      [dims[0] - 1, dims[1] - 1, dims[2] - 1],
+    ];
+
+    const rasCorners = corners.map(c => applyAffine(c, this.affine));
+
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+    for (const c of rasCorners) {
+      if (c[0] < minX) minX = c[0]; if (c[0] > maxX) maxX = c[0];
+      if (c[1] < minY) minY = c[1]; if (c[1] > maxY) maxY = c[1];
+      if (c[2] < minZ) minZ = c[2]; if (c[2] > maxZ) maxZ = c[2];
+    }
+
+    const bounds: [number, number][] = [
+      [minX, maxX],
+      [minY, maxY],
+      [minZ, maxZ],
+    ];
+
     let tMin = -Infinity;
     let tMax = Infinity;
 
     for (let axis = 0; axis < 3; axis++) {
       const originVal = origin[axis];
       const dirVal = direction[axis];
-      const minBound = 0;
-      const maxBound = dims[axis] - 1;
+      const [minBound, maxBound] = bounds[axis];
 
       if (Math.abs(dirVal) < 1e-10) {
         // 直线平行于此轴

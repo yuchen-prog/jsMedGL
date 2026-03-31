@@ -20,6 +20,8 @@ export {
   createObliquePlane,
   ObliqueExtractor,
   createObliqueExtractor,
+  quaternionFromAxisAngle,
+  multiplyQuaternions,
 } from './oblique';
 export type {
   ObliqueBasis,
