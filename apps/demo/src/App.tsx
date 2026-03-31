@@ -364,8 +364,8 @@ interface ObliqueSliceViewerProps {
   /** Intersection of this view's plane with the other two */
   intersectionH: Line3D | null;
   intersectionV: Line3D | null;
-  /** Callback when plane rotates — parent should recompute intersections */
-  onRotate?: () => void;
+  /** Callback to rotate the OTHER two planes — child sends deltaQ, parent applies to correct planes */
+  onRotateOtherPlanes?: (deltaQ: [number, number, number, number]) => void;
   /** Callback when focal point changes via scroll wheel — parent should sync other planes */
   onFocalPointChange?: (ijk: CrosshairPosition) => void;
 }
@@ -384,7 +384,7 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
   plane,
   intersectionH,
   intersectionV,
-  onRotate,
+  onRotateOtherPlanes,
   onFocalPointChange,
 }: ObliqueSliceViewerProps & { extractor: ObliqueExtractorType }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -405,9 +405,7 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
   ];
 
   // Rotation drag state
-  const isRotating = useRef(false);
-  const rotateAxis = useRef<[number, number, number] | null>(null);
-  const rotateSensitivity = 0.005; // rad per pixel
+  const lastAngle = useRef(0); // last mouse angle relative to crosshair center
 
   // ── Create view ────────────────────────────────────────────────────
   useEffect(() => {
@@ -434,11 +432,17 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
     viewRef.current?.setWindowLevel(windowLevel.window, windowLevel.level);
   }, [windowLevel.window, windowLevel.level]);
 
-  // ── Sync intersection lines & handles to DOM ────────────────────────
+  // ── Sync intersection lines, handles, and slice image to DOM ──────────
+  // This runs every render — when the parent's renderTick changes, intersectionH/V
+  // are recomputed, and we must also re-render the slice image if the plane rotated.
   useEffect(() => {
     if (!viewRef.current) return;
     const view = viewRef.current;
     const displayRect = view.getDisplayRect();
+
+    // Re-render the slice image (plane may have rotated if this is one of the "other" planes)
+    view.setObliquePlane(plane.getComputed(), extractor);
+
     const computed = plane.getComputed();
     const { width: fullW, height: fullH, center } = computed;
 
@@ -583,27 +587,46 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
   });
 
   // ── Rotation handle drag ────────────────────────────────────────────
-  const handleRotateStart = useCallback((e: React.MouseEvent, axis: [number, number, number]) => {
+  // All handles rotate around the current plane's normal (which is the
+  // crosshair center axis). The rotation is applied to the OTHER two planes,
+  // not this one. H and V lines naturally stay perpendicular because both
+  // other planes rotate by the same delta.
+  const handleRotateStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    isRotating.current = true;
-    rotateAxis.current = axis;
-  }, []);
 
-  const handleRotateMove = useCallback((e: React.MouseEvent) => {
-    if (!isRotating.current || !rotateAxis.current || !viewRef.current) return;
-    const delta = e.movementX * rotateSensitivity;
-    const deltaQ = quaternionFromAxisAngle(rotateAxis.current, delta);
-    plane.applyRotationDelta(deltaQ);
-    viewRef.current.setObliquePlane(plane.getComputed(), extractor);
-    // Notify parent to recompute intersections
-    onRotate?.();
-  }, [plane, extractor, onRotate]);
+    // Compute initial angle of mouse relative to crosshair center (screen coords)
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const startAngle = Math.atan2(e.clientY - cy, e.clientX - cx);
 
-  const handleRotateEnd = useCallback(() => {
-    isRotating.current = false;
-    rotateAxis.current = null;
-  }, []);
+    const onMove = (ev: MouseEvent) => {
+      const r = container.getBoundingClientRect();
+      const centerX = r.left + r.width / 2;
+      const centerY = r.top + r.height / 2;
+      const currentAngle = Math.atan2(ev.clientY - centerY, ev.clientX - centerX);
+      let delta = currentAngle - lastAngle.current;
+      if (delta > Math.PI) delta -= 2 * Math.PI;
+      if (delta < -Math.PI) delta += 2 * Math.PI;
+      lastAngle.current = currentAngle;
+
+      const normal = plane.getBasis().normal;
+      const deltaQ = quaternionFromAxisAngle(normal, delta);
+      onRotateOtherPlanes?.([deltaQ[0], deltaQ[1], deltaQ[2], deltaQ[3]]);
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    lastAngle.current = startAngle;
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [plane, onRotateOtherPlanes]);
 
   // ── Scroll wheel: move focal point along normal ───────────────────────
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -642,24 +665,21 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
         <div ref={hLineRef} className="crosshair-line" />
         <div ref={vLineRef} className="crosshair-line" />
         <div ref={dotRef} className="crosshair-dot" style={{ background: ORIENTATION_COLORS[orientation] }} />
-        {/* H handles → rotate around vAxis */}
+        {/* H handles */}
         <div ref={handleRefs[0]} className="rotation-handle" style={{ background: colors.h }}
-          onMouseDown={(e) => handleRotateStart(e, plane.getBasis().vAxis)} />
+          onMouseDown={handleRotateStart} />
         <div ref={handleRefs[1]} className="rotation-handle" style={{ background: colors.h }}
-          onMouseDown={(e) => handleRotateStart(e, plane.getBasis().vAxis)} />
-        {/* V handles → rotate around uAxis */}
+          onMouseDown={handleRotateStart} />
+        {/* V handles */}
         <div ref={handleRefs[2]} className="rotation-handle" style={{ background: colors.v }}
-          onMouseDown={(e) => handleRotateStart(e, plane.getBasis().uAxis)} />
+          onMouseDown={handleRotateStart} />
         <div ref={handleRefs[3]} className="rotation-handle" style={{ background: colors.v }}
-          onMouseDown={(e) => handleRotateStart(e, plane.getBasis().uAxis)} />
+          onMouseDown={handleRotateStart} />
       </div>
-      {/* Mouse capture layer */}
+      {/* Mouse capture layer for scroll wheel only */}
       <div
         style={{ position: 'absolute', inset: 0, cursor: 'crosshair', zIndex: 5 }}
         onWheel={handleWheel}
-        onMouseMove={handleRotateMove}
-        onMouseUp={handleRotateEnd}
-        onMouseLeave={handleRotateEnd}
       />
     </div>
   );
@@ -772,10 +792,23 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [volume, renderTick]); // recompute when planes rotate
 
-  // Handle rotation from any view - triggers re-render to update intersections
-  const handlePlaneRotate = useCallback(() => {
-    setRenderTick(t => t + 1);
-  }, []);
+  // Handle rotation from child views — apply deltaQ to the OTHER two planes
+  // When dragging handles on view X, rotate planes Y and Z (not X).
+  const handleRotateOtherPlanes = useCallback(
+    (sourceOrientation: SliceOrientation, deltaQ: [number, number, number, number]) => {
+      const { axial, coronal, sagittal } = planesRef.current;
+      // Rotate the two planes that are NOT the source
+      if (sourceOrientation !== 'axial' && axial) {
+        axial.applyRotationDelta(deltaQ);
+      }
+      if (sourceOrientation !== 'coronal' && coronal) {
+        coronal.applyRotationDelta(deltaQ);
+      }
+      if (sourceOrientation !== 'sagittal' && sagittal) {
+        sagittal.applyRotationDelta(deltaQ);
+      }
+      setRenderTick(t => t + 1);
+    }, []);
 
   // Handle focal point change from scroll wheel - sync all planes
   const handleFocalPointChange = useCallback((ijk: CrosshairPosition) => {
@@ -801,7 +834,7 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
             plane={axial}
             intersectionH={intersections.axial.h}
             intersectionV={intersections.axial.v}
-            onRotate={handlePlaneRotate}
+            onRotateOtherPlanes={(deltaQ) => handleRotateOtherPlanes('axial', deltaQ)}
             onFocalPointChange={handleFocalPointChange}
           />
         ) : <LoadingSpinner />}
@@ -818,7 +851,7 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
               plane={coronal}
               intersectionH={intersections.coronal.h}
               intersectionV={intersections.coronal.v}
-              onRotate={handlePlaneRotate}
+              onRotateOtherPlanes={(deltaQ) => handleRotateOtherPlanes('coronal', deltaQ)}
               onFocalPointChange={handleFocalPointChange}
             />
           ) : <LoadingSpinner />}
@@ -834,7 +867,7 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
               plane={sagittal}
               intersectionH={intersections.sagittal.h}
               intersectionV={intersections.sagittal.v}
-              onRotate={handlePlaneRotate}
+              onRotateOtherPlanes={(deltaQ) => handleRotateOtherPlanes('sagittal', deltaQ)}
               onFocalPointChange={handleFocalPointChange}
             />
           ) : <LoadingSpinner />}
