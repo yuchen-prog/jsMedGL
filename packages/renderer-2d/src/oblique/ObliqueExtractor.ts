@@ -150,6 +150,8 @@ export class ObliqueExtractor {
     // 量化到 0.5mm 精度，避免浮点精度问题
     return `${Math.round(c[0]*2)}:${Math.round(c[1]*2)}:${Math.round(c[2]*2)}` +
            `|${Math.round(b.normal[0]*100)}:${Math.round(b.normal[1]*100)}:${Math.round(b.normal[2]*100)}` +
+           `|${Math.round(b.uAxis[0]*100)}:${Math.round(b.uAxis[1]*100)}:${Math.round(b.uAxis[2]*100)}` +
+           `|${Math.round(b.vAxis[0]*100)}:${Math.round(b.vAxis[1]*100)}:${Math.round(b.vAxis[2]*100)}` +
            `|${plane.width}:${plane.height}`;
   }
 

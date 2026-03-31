@@ -425,7 +425,7 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
       view.dispose();
       viewRef.current = null;
     };
-  }, [volume, orientation, extractor]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [volume, orientation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Apply window/level ────────────────────────────────────────────────
   useEffect(() => {
@@ -441,9 +441,9 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
     const displayRect = view.getDisplayRect();
 
     // Re-render the slice image (plane may have rotated if this is one of the "other" planes)
-    view.setObliquePlane(plane.getComputed(), extractor);
-
     const computed = plane.getComputed();
+    view.setObliquePlane(computed, extractor);
+
     const { width: fullW, height: fullH, center } = computed;
 
     // Helper: UV (plane-local) → screen px
@@ -807,8 +807,10 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
       if (sourceOrientation !== 'sagittal' && sagittal) {
         sagittal.applyRotationDelta(deltaQ);
       }
+      // Clear extractor cache to avoid stale slice data after rotation
+      extractor?.clearCache();
       setRenderTick(t => t + 1);
-    }, []);
+    }, [extractor]);
 
   // Handle focal point change from scroll wheel - sync all planes
   const handleFocalPointChange = useCallback((ijk: CrosshairPosition) => {
@@ -816,8 +818,9 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
     axial?.setFocalPointIjk(ijk);
     coronal?.setFocalPointIjk(ijk);
     sagittal?.setFocalPointIjk(ijk);
+    extractor?.clearCache();
     setRenderTick(t => t + 1);
-  }, []);
+  }, [extractor]);
 
   const { axial, coronal, sagittal } = planesRef.current;
   const ready = extractor && axial && coronal && sagittal;
