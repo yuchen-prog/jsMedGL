@@ -11,7 +11,7 @@ import {
 } from '@jsmedgl/renderer-2d';
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
 import type { SliceOrientation, CrosshairPosition } from '@jsmedgl/renderer-2d';
-import type { ObliquePlaneComputed } from '@jsmedgl/renderer-2d';
+import type { Line3D } from '@jsmedgl/renderer-2d';
 import './styles.css';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -359,46 +359,73 @@ interface ObliqueSliceViewerProps {
   windowLevel: WindowLevelState;
   /** Shared extractor (with pre-normalized data) */
   extractor?: ObliqueExtractorType;
+  /** Live plane instance — managed by parent */
+  plane: ObliquePlane;
+  /** Intersection of this view's plane with the other two */
+  intersectionH: Line3D | null;
+  intersectionV: Line3D | null;
+  /** Callback when plane rotates — parent should recompute intersections */
+  onRotate?: () => void;
+  /** Callback when focal point changes via scroll wheel — parent should sync other planes */
+  onFocalPointChange?: (ijk: CrosshairPosition) => void;
 }
 
 /**
  * Single oblique slice viewer.
  * Renders an oblique slice using ObliquePlane + ObliqueExtractor + WebGLSliceView.
- * Scroll wheel adjusts the plane's focal point along its normal axis.
+ * - Scroll wheel: move focal point along plane normal
+ * - Rotation handles at 1/4 & 3/4 of crosshair lines: rotate the plane
  */
 const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
   volume,
   orientation,
   windowLevel,
   extractor,
+  plane,
+  intersectionH,
+  intersectionV,
+  onRotate,
+  onFocalPointChange,
 }: ObliqueSliceViewerProps & { extractor: ObliqueExtractorType }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<WebGLSliceView | null>(null);
-  const planeRef = useRef<ObliquePlane | null>(null);
 
-  // ── Create plane and view (extractor shared from parent) ──────────────
+  // Crosshair DOM refs
+  const hLineRef = useRef<HTMLDivElement>(null);
+  const vLineRef = useRef<HTMLDivElement>(null);
+  const dotRef = useRef<HTMLDivElement>(null);
+
+  // 4 rotation handle refs: [hLeft, hRight, vTop, vBottom]
+  const handleRefs = [
+    useRef<HTMLDivElement>(null),
+    useRef<HTMLDivElement>(null),
+    useRef<HTMLDivElement>(null),
+    useRef<HTMLDivElement>(null),
+  ];
+
+  // Rotation drag state
+  const isRotating = useRef(false);
+  const rotateAxis = useRef<[number, number, number] | null>(null);
+  const rotateSensitivity = 0.005; // rad per pixel
+
+  // ── Create view ────────────────────────────────────────────────────
   useEffect(() => {
     const wrapper = canvasWrapperRef.current;
     if (!wrapper) return;
 
-    const plane = createObliquePlane({ volume, baseOrientation: orientation });
-    planeRef.current = plane;
-
-    const computed = plane.getComputed();
     const view = createWebGLSliceView(volume, {
       container: wrapper,
       orientation,
       initialWindowLevel: { window: windowLevel.window, level: windowLevel.level },
     });
-
-    view.setObliquePlane(computed, extractor);
     viewRef.current = view;
+
+    view.setObliquePlane(plane.getComputed(), extractor);
 
     return () => {
       view.dispose();
       viewRef.current = null;
-      planeRef.current = null;
     };
   }, [volume, orientation, extractor]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -407,31 +434,201 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
     viewRef.current?.setWindowLevel(windowLevel.window, windowLevel.level);
   }, [windowLevel.window, windowLevel.level]);
 
+  // ── Sync intersection lines & handles to DOM ────────────────────────
+  useEffect(() => {
+    if (!viewRef.current) return;
+    const view = viewRef.current;
+    const displayRect = view.getDisplayRect();
+    const computed = plane.getComputed();
+    const { width: fullW, height: fullH, center } = computed;
+
+    // Helper: UV (plane-local) → screen px
+    const uvToScreen = (u: number, v: number): { x: number; y: number } => ({
+      x: displayRect.x + (u / fullW + 0.5) * displayRect.width,
+      y: displayRect.y + (v / fullH + 0.5) * displayRect.height,
+    });
+
+    // Helper: clip line segment to UV box [-w/2, w/2] × [-h/2, h/2], returning endpoints in screen space
+    const clipLineToView = (
+      line: Line3D | null
+    ): { p1: { x: number; y: number }; p2: { x: number; y: number } } | null => {
+      if (!line) return null;
+
+      // Direction of the 3D line in RAS space
+      const dx = line.end[0] - line.start[0];
+      const dy = line.end[1] - line.start[1];
+      const dz = line.end[2] - line.start[2];
+      const len3d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (len3d < 1e-10) return null;
+
+      // Normalize direction
+      const dir: [number, number, number] = [dx / len3d, dy / len3d, dz / len3d];
+
+      // Project direction to plane UV space
+      const focal = plane.rasToPlane(center);
+      if (!focal) return null;
+
+      // Direction projection: sample a point slightly along dir and compare to focal
+      const sampleRas: [number, number, number] = [
+        center[0] + dir[0],
+        center[1] + dir[1],
+        center[2] + dir[2],
+      ];
+      const sampleUv = plane.rasToPlane(sampleRas);
+      if (!sampleUv) return null;
+
+      // UV direction from focal toward sample
+      const dirU = sampleUv.u - focal.u;
+      const dirV = sampleUv.v - focal.v;
+
+      const halfW = fullW / 2;
+      const halfH = fullH / 2;
+
+      // Compute distances to UV boundary planes
+      let tMinU = -Infinity, tMaxU = Infinity;
+      let tMinV = -Infinity, tMaxV = Infinity;
+
+      if (Math.abs(dirU) > 1e-10) {
+        tMinU = (-halfW - focal.u) / dirU;
+        tMaxU = (halfW - focal.u) / dirU;
+        if (tMinU > tMaxU) { const tmp = tMinU; tMinU = tMaxU; tMaxU = tmp; }
+      }
+      if (Math.abs(dirV) > 1e-10) {
+        tMinV = (-halfH - focal.v) / dirV;
+        tMaxV = (halfH - focal.v) / dirV;
+        if (tMinV > tMaxV) { const tmp = tMinV; tMinV = tMaxV; tMaxV = tmp; }
+      }
+
+      const tMin = Math.max(tMinU, tMinV);
+      const tMax = Math.min(tMaxU, tMaxV);
+
+      if (tMin >= tMax) return null;
+
+      // RAS endpoints on plane boundary
+      const ras1: [number, number, number] = [
+        center[0] + dir[0] * tMin,
+        center[1] + dir[1] * tMin,
+        center[2] + dir[2] * tMin,
+      ];
+      const ras2: [number, number, number] = [
+        center[0] + dir[0] * tMax,
+        center[1] + dir[1] * tMax,
+        center[2] + dir[2] * tMax,
+      ];
+
+      // RAS → UV → screen
+      const uv1 = plane.rasToPlane(ras1);
+      const uv2 = plane.rasToPlane(ras2);
+      if (!uv1 || !uv2) return null;
+
+      return {
+        p1: uvToScreen(uv1.u, uv1.v),
+        p2: uvToScreen(uv2.u, uv2.v),
+      };
+    };
+
+    const renderLine = (
+      ref: React.RefObject<HTMLDivElement | null>,
+      line: Line3D | null,
+      color: string
+    ) => {
+      if (!line || !ref.current) return;
+      const pts = clipLineToView(line);
+      if (!pts) return;
+      const { p1, p2 } = pts;
+      const dx = p2.x - p1.x, dy = p2.y - p1.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      const el = ref.current;
+      el.style.left = `${p1.x}px`;
+      el.style.top = `${p1.y}px`;
+      el.style.width = `${len}px`;
+      el.style.height = '1px';
+      el.style.transformOrigin = '0 50%';
+      el.style.transform = `rotate(${angle}deg)`;
+      el.style.background = color;
+    };
+
+    renderLine(hLineRef, intersectionH, CROSSHAIR_COLORS[orientation].h);
+    renderLine(vLineRef, intersectionV, CROSSHAIR_COLORS[orientation].v);
+
+    // Center dot at focal point
+    if (dotRef.current) {
+      const focalUv = plane.rasToPlane(center);
+      if (focalUv) {
+        const fp = uvToScreen(focalUv.u, focalUv.v);
+        dotRef.current.style.left = `${fp.x}px`;
+        dotRef.current.style.top = `${fp.y}px`;
+      }
+    }
+
+    // Rotation handles at 1/4 and 3/4 of clipped line
+    const setHandle = (
+      ref: React.RefObject<HTMLDivElement | null>,
+      line: Line3D | null,
+      t: number
+    ) => {
+      if (!line || !ref?.current) return;
+      const pts = clipLineToView(line);
+      if (!pts) return;
+      const { p1, p2 } = pts;
+      ref.current.style.left = `${p1.x + t * (p2.x - p1.x)}px`;
+      ref.current.style.top = `${p1.y + t * (p2.y - p1.y)}px`;
+    };
+
+    setHandle(handleRefs[0], intersectionH, 0.25);
+    setHandle(handleRefs[1], intersectionH, 0.75);
+    setHandle(handleRefs[2], intersectionV, 0.25);
+    setHandle(handleRefs[3], intersectionV, 0.75);
+  });
+
+  // ── Rotation handle drag ────────────────────────────────────────────
+  const handleRotateStart = useCallback((e: React.MouseEvent, axis: [number, number, number]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isRotating.current = true;
+    rotateAxis.current = axis;
+  }, []);
+
+  const handleRotateMove = useCallback((e: React.MouseEvent) => {
+    if (!isRotating.current || !rotateAxis.current || !viewRef.current) return;
+    const delta = e.movementX * rotateSensitivity;
+    const deltaQ = quaternionFromAxisAngle(rotateAxis.current, delta);
+    plane.applyRotationDelta(deltaQ);
+    viewRef.current.setObliquePlane(plane.getComputed(), extractor);
+    // Notify parent to recompute intersections
+    onRotate?.();
+  }, [plane, extractor, onRotate]);
+
+  const handleRotateEnd = useCallback(() => {
+    isRotating.current = false;
+    rotateAxis.current = null;
+  }, []);
+
   // ── Scroll wheel: move focal point along normal ───────────────────────
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    const plane = planeRef.current;
-    const view = viewRef.current;
-    if (!plane || !view) return;
+    if (!viewRef.current) return;
 
     const ijk = plane.getFocalPointIjk();
     const step = e.deltaY > 0 ? 1 : -1;
-
-    let newIjk = { ...ijk };
+    const newIjk = { ...ijk };
     switch (orientation) {
       case 'axial':    newIjk.k += step; break;
       case 'coronal':  newIjk.j += step; break;
       case 'sagittal': newIjk.i += step; break;
     }
-
-    const dims = volume.dimensions;
+    const dims = volume.dimensions as [number, number, number];
     newIjk.i = Math.max(0, Math.min(dims[0] - 1, newIjk.i));
     newIjk.j = Math.max(0, Math.min(dims[1] - 1, newIjk.j));
     newIjk.k = Math.max(0, Math.min(dims[2] - 1, newIjk.k));
-
     plane.setFocalPointIjk(newIjk);
-    view.setObliquePlane(plane.getComputed(), extractor);
-  }, [orientation, volume.dimensions, extractor]);
+    viewRef.current.setObliquePlane(plane.getComputed(), extractor);
+    // Notify parent to sync focal point across all planes
+    onFocalPointChange?.(newIjk);
+  }, [orientation, volume.dimensions, plane, extractor, onFocalPointChange]);
+
+  const colors = CROSSHAIR_COLORS[orientation];
 
   return (
     <div
@@ -441,9 +638,28 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
     >
       <div ref={canvasWrapperRef} className="canvas-wrapper" />
       <OrientationLabels orientation={orientation} />
+      <div className="crosshair-overlay">
+        <div ref={hLineRef} className="crosshair-line" />
+        <div ref={vLineRef} className="crosshair-line" />
+        <div ref={dotRef} className="crosshair-dot" style={{ background: ORIENTATION_COLORS[orientation] }} />
+        {/* H handles → rotate around vAxis */}
+        <div ref={handleRefs[0]} className="rotation-handle" style={{ background: colors.h }}
+          onMouseDown={(e) => handleRotateStart(e, plane.getBasis().vAxis)} />
+        <div ref={handleRefs[1]} className="rotation-handle" style={{ background: colors.h }}
+          onMouseDown={(e) => handleRotateStart(e, plane.getBasis().vAxis)} />
+        {/* V handles → rotate around uAxis */}
+        <div ref={handleRefs[2]} className="rotation-handle" style={{ background: colors.v }}
+          onMouseDown={(e) => handleRotateStart(e, plane.getBasis().uAxis)} />
+        <div ref={handleRefs[3]} className="rotation-handle" style={{ background: colors.v }}
+          onMouseDown={(e) => handleRotateStart(e, plane.getBasis().uAxis)} />
+      </div>
+      {/* Mouse capture layer */}
       <div
-        style={{ position: 'absolute', inset: 0, cursor: 'crosshair' }}
+        style={{ position: 'absolute', inset: 0, cursor: 'crosshair', zIndex: 5 }}
         onWheel={handleWheel}
+        onMouseMove={handleRotateMove}
+        onMouseUp={handleRotateEnd}
+        onMouseLeave={handleRotateEnd}
       />
     </div>
   );
@@ -457,13 +673,51 @@ interface ObliqueMPRViewerProps {
 }
 
 function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
-  // Use state so React re-renders when extractor is ready
+  // Extractor state (shared across all three views)
   const [extractor, setExtractor] = useState<ObliqueExtractorType | null>(null);
+  // Force re-render trigger when planes rotate
+  const [renderTick, setRenderTick] = useState(0);
   // Keep a ref for cleanup
   const sharedViewRef = useRef<WebGLSliceView | null>(null);
 
+  // Three plane instances (one per view) - created once and persisted
+  const planesRef = useRef<{
+    axial: ObliquePlane | null;
+    coronal: ObliquePlane | null;
+    sagittal: ObliquePlane | null;
+  }>({ axial: null, coronal: null, sagittal: null });
+
+  // Initialize planes once when volume changes
   useEffect(() => {
-    // Create one hidden slice extractor just to get normalizedData
+    const dims = volume.dimensions as [number, number, number];
+    const centerIjk: CrosshairPosition = {
+      i: Math.floor(dims[0] / 2),
+      j: Math.floor(dims[1] / 2),
+      k: Math.floor(dims[2] / 2),
+    };
+
+    // Create three planes with shared focal point at volume center
+    const axialPlane = createObliquePlane({ volume, baseOrientation: 'axial' });
+    const coronalPlane = createObliquePlane({ volume, baseOrientation: 'coronal' });
+    const sagittalPlane = createObliquePlane({ volume, baseOrientation: 'sagittal' });
+
+    // Set shared focal point
+    axialPlane.setFocalPointIjk(centerIjk);
+    coronalPlane.setFocalPointIjk(centerIjk);
+    sagittalPlane.setFocalPointIjk(centerIjk);
+
+    planesRef.current = { axial: axialPlane, coronal: coronalPlane, sagittal: sagittalPlane };
+
+    // Trigger re-render so useMemo recomputes intersections with the new planes
+    setRenderTick(t => t + 1);
+
+    return () => {
+      planesRef.current = { axial: null, coronal: null, sagittal: null };
+    };
+  }, [volume]);
+
+  // Create extractor (same as before)
+  useEffect(() => {
     const container = document.createElement('div');
     container.style.display = 'none';
     document.body.appendChild(container);
@@ -477,16 +731,6 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
 
     const normalizedData = view.getNormalizedData();
     const ext = createObliqueExtractor({ volume, normalizedData });
-
-    // Debug: test extraction
-    const testPlane = createObliquePlane({ volume, baseOrientation: 'axial' });
-    const computed = testPlane.getComputed();
-    const testResult = ext.extractSlice(computed);
-    console.log('[ObliqueMPRViewer] normalizedData length:', normalizedData.length);
-    console.log('[ObliqueMPRViewer] plane computed:', computed.width, 'x', computed.height);
-    console.log('[ObliqueMPRViewer] extractSlice result:', testResult.width, 'x', testResult.height, 'nonZero:', testResult.data.filter(v => v > 0).length);
-
-    // Use setState so children re-render with the extractor
     setExtractor(ext);
 
     return () => {
@@ -495,40 +739,103 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
       sharedViewRef.current = null;
       setExtractor(null);
     };
-  }, [volume]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [volume]);
+
+  // Compute intersection lines between planes
+  const intersections = useMemo(() => {
+    const { axial, coronal, sagittal } = planesRef.current;
+    if (!axial || !coronal || !sagittal) {
+      return {
+        axial: { h: null as Line3D | null, v: null as Line3D | null },
+        coronal: { h: null as Line3D | null, v: null as Line3D | null },
+        sagittal: { h: null as Line3D | null, v: null as Line3D | null },
+      };
+    }
+
+    return {
+      // Axial view: H-line = intersection with Coronal, V-line = intersection with Sagittal
+      axial: {
+        h: axial.getIntersectionWith(coronal.getComputed()),
+        v: axial.getIntersectionWith(sagittal.getComputed()),
+      },
+      // Coronal view: H-line = intersection with Axial, V-line = intersection with Sagittal
+      coronal: {
+        h: coronal.getIntersectionWith(axial.getComputed()),
+        v: coronal.getIntersectionWith(sagittal.getComputed()),
+      },
+      // Sagittal view: H-line = intersection with Axial, V-line = intersection with Coronal
+      sagittal: {
+        h: sagittal.getIntersectionWith(axial.getComputed()),
+        v: sagittal.getIntersectionWith(coronal.getComputed()),
+      },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [volume, renderTick]); // recompute when planes rotate
+
+  // Handle rotation from any view - triggers re-render to update intersections
+  const handlePlaneRotate = useCallback(() => {
+    setRenderTick(t => t + 1);
+  }, []);
+
+  // Handle focal point change from scroll wheel - sync all planes
+  const handleFocalPointChange = useCallback((ijk: CrosshairPosition) => {
+    const { axial, coronal, sagittal } = planesRef.current;
+    axial?.setFocalPointIjk(ijk);
+    coronal?.setFocalPointIjk(ijk);
+    sagittal?.setFocalPointIjk(ijk);
+    setRenderTick(t => t + 1);
+  }, []);
+
+  const { axial, coronal, sagittal } = planesRef.current;
+  const ready = extractor && axial && coronal && sagittal;
 
   return (
     <div className="viewer-mpr">
       <div className="mpr-left">
-        {extractor ? (
+        {ready ? (
           <ObliqueSliceViewer
             volume={volume}
             orientation="axial"
             windowLevel={windowLevel}
             extractor={extractor}
+            plane={axial}
+            intersectionH={intersections.axial.h}
+            intersectionV={intersections.axial.v}
+            onRotate={handlePlaneRotate}
+            onFocalPointChange={handleFocalPointChange}
           />
         ) : <LoadingSpinner />}
         <div className="mpr-label">Axial (Oblique)</div>
       </div>
       <div className="mpr-right">
         <div className="mpr-right-top">
-          {extractor ? (
+          {ready ? (
             <ObliqueSliceViewer
               volume={volume}
               orientation="coronal"
               windowLevel={windowLevel}
               extractor={extractor}
+              plane={coronal}
+              intersectionH={intersections.coronal.h}
+              intersectionV={intersections.coronal.v}
+              onRotate={handlePlaneRotate}
+              onFocalPointChange={handleFocalPointChange}
             />
           ) : <LoadingSpinner />}
           <div className="mpr-label">Coronal (Oblique)</div>
         </div>
         <div className="mpr-right-bottom">
-          {extractor ? (
+          {ready ? (
             <ObliqueSliceViewer
               volume={volume}
               orientation="sagittal"
               windowLevel={windowLevel}
               extractor={extractor}
+              plane={sagittal}
+              intersectionH={intersections.sagittal.h}
+              intersectionV={intersections.sagittal.v}
+              onRotate={handlePlaneRotate}
+              onFocalPointChange={handleFocalPointChange}
             />
           ) : <LoadingSpinner />}
           <div className="mpr-label">Sagittal (Oblique)</div>
