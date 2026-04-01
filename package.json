@@ -11,7 +11,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "website:dev": "pnpm --filter @jsmedgl/website dev",
+    "website:build": "pnpm --filter @jsmedgl/website build"
   },
   "keywords": [
     "medical-imaging",

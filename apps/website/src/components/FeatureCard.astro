@@ -1,0 +1,29 @@
+---
+export interface Props {
+  title: string;
+  description: string;
+  icon: string;
+  index?: number;
+}
+
+const { title, description, icon, index = 0 } = Astro.props;
+---
+
+<article
+  class="card group animate-on-scroll relative overflow-hidden"
+  style={`transition-delay: ${index * 100}ms`}
+>
+  <!-- Icon -->
+  <div class="w-10 h-10 flex items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400 mb-4 group-hover:bg-indigo-500/20 transition-colors duration-300" set:html={icon} />
+
+  <h3 class="font-heading font-semibold text-zinc-100 text-lg mb-2 group-hover:text-white transition-colors duration-300">
+    {title}
+  </h3>
+
+  <p class="text-sm text-zinc-400 leading-relaxed">
+    {description}
+  </p>
+
+  <!-- Hover glow -->
+  <div class="absolute inset-0 rounded-xl bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"></div>
+</article>

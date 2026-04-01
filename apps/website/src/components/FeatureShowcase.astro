@@ -1,0 +1,54 @@
+---
+import { features, featureIcons } from '../data/features';
+import FeatureCard from './FeatureCard.astro';
+---
+
+<section id="features" class="section-padding relative">
+  <div class="absolute inset-0 dot-grid opacity-20 pointer-events-none"></div>
+
+  <div class="container-width relative">
+    <!-- Section header -->
+    <div class="text-center mb-16 animate-on-scroll">
+      <div class="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-xs text-indigo-300 font-mono mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        Features
+      </div>
+      <h2 class="font-heading text-3xl md:text-4xl font-bold text-zinc-100 mb-4">
+        Built for Medical Imaging
+      </h2>
+      <p class="text-zinc-400 max-w-xl mx-auto">
+        Everything you need for browser-based volumetric imaging — no plugins, no installations, no compromises.
+      </p>
+    </div>
+
+    <!-- Feature grid -->
+    <div class="grid sm:grid-cols-2 gap-6">
+      {features.map((feature, i) => (
+        <FeatureCard
+          title={feature.title}
+          description={feature.description}
+          icon={featureIcons[feature.icon]}
+          index={i}
+        />
+      ))}
+    </div>
+
+    <!-- Additional capabilities row -->
+    <div class="mt-12 grid sm:grid-cols-3 gap-4 animate-on-scroll">
+      <div class="flex items-center gap-3 p-4 bg-surface border border-zinc-800 rounded-xl">
+        <div class="w-2 h-2 rounded-full bg-green-500"></div>
+        <span class="text-sm text-zinc-300">LPS/RAS/IJK coordinate system</span>
+      </div>
+      <div class="flex items-center gap-3 p-4 bg-surface border border-zinc-800 rounded-xl">
+        <div class="w-2 h-2 rounded-full bg-green-500"></div>
+        <span class="text-sm text-zinc-300">TypeScript throughout</span>
+      </div>
+      <div class="flex items-center gap-3 p-4 bg-surface border border-zinc-800 rounded-xl">
+        <div class="w-2 h-2 rounded-full bg-green-500"></div>
+        <span class="text-sm text-zinc-300">Tree-shakeable packages</span>
+      </div>
+    </div>
+  </div>
+</section>

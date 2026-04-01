@@ -1,0 +1,82 @@
+---
+import { roadmap } from '../data/roadmap';
+
+const statusColors = {
+  current: 'bg-green-500 text-green-400 border-green-500/30',
+  next: 'bg-indigo-500 text-indigo-300 border-indigo-500/30',
+  future: 'bg-zinc-600 text-zinc-400 border-zinc-600',
+};
+
+const statusBg = {
+  current: 'border-green-500/30 bg-green-500/5',
+  next: 'border-indigo-500/30 bg-indigo-500/5',
+  future: 'border-zinc-700 bg-zinc-900',
+};
+---
+
+<section id="roadmap" class="section-padding bg-zinc-900/50 relative">
+  <div class="absolute inset-0 dot-grid opacity-10 pointer-events-none"></div>
+
+  <div class="container-width relative">
+    <!-- Header -->
+    <div class="text-center mb-16 animate-on-scroll">
+      <div class="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-xs text-indigo-300 font-mono mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/>
+        </svg>
+        Roadmap
+      </div>
+      <h2 class="font-heading text-3xl md:text-4xl font-bold text-zinc-100 mb-4">
+        What's Next
+      </h2>
+      <p class="text-zinc-400 max-w-xl mx-auto">
+        From core NIfTI rendering to full clinical tooling — here's where we're heading.
+      </p>
+    </div>
+
+    <!-- Timeline -->
+    <div class="relative">
+      <!-- Connecting line (desktop) -->
+      <div class="hidden md:block absolute top-[3.5rem] left-[calc(16.67%+2rem)] right-[calc(16.67%+2rem)] h-px bg-gradient-to-r from-green-500/50 via-indigo-500/50 to-zinc-700/50"></div>
+
+      <div class="grid md:grid-cols-3 gap-8">
+        {roadmap.map((milestone, i) => (
+          <div class="animate-on-scroll relative" style={`transition-delay: ${i * 150}ms`}>
+            <!-- Node -->
+            <div class={`hidden md:flex absolute -top-1 left-[calc(50%-1rem)] w-8 h-8 rounded-full border-2 ${statusBg[milestone.status]} items-center justify-center`}>
+              {milestone.status === 'current' && <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>}
+              {milestone.status === 'next' && <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-400"><polygon points="5 3 19 12 5 21 5 3"/></svg>}
+              {milestone.status === 'future' && <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-zinc-500"><circle cx="12" cy="12" r="1"/></svg>}
+            </div>
+
+            <!-- Card -->
+            <div class={`card border ${statusBg[milestone.status]} mt-8`}>
+              <!-- Version badge -->
+              <div class="flex items-center justify-between mb-4">
+                <span class={`text-xs font-mono font-medium px-2.5 py-1 rounded-full border ${statusColors[milestone.status]}`}>
+                  {milestone.version}
+                </span>
+                <span class={`text-xs ${milestone.status === 'current' ? 'text-green-400' : milestone.status === 'next' ? 'text-indigo-400' : 'text-zinc-500'}`}>
+                  {milestone.label}
+                </span>
+              </div>
+
+              <h3 class="font-heading font-semibold text-zinc-100 mb-4">{milestone.title}</h3>
+
+              <ul class="space-y-2">
+                {milestone.items.map((item) => (
+                  <li class="flex items-start gap-2 text-sm text-zinc-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mt-0.5 flex-shrink-0 text-zinc-600">
+                      <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+</section>
