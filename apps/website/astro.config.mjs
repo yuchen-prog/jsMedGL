@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   site: 'https://yuchen-prog.github.io',
-  base: '/jsMedgl/',
+  base: '/jsMedGL/',
   integrations: [react(), tailwind()],
   vite: {
     resolve: {
