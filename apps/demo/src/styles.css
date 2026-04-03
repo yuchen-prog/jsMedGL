@@ -398,6 +398,63 @@
   margin-top: 8px;
 }
 
+/* ─── Volume 3D Viewer ─────────────────────────────────────────────────── */
+.viewer-volume3d {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #050510;
+}
+
+.viewer-volume3d__canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.viewer-volume3d__canvas canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* 3D Volume button in header */
+.mpr-btn.volume3d-btn {
+  background: #2a1a4a;
+  border-color: #7c3aed;
+}
+
+.mpr-btn.volume3d-btn:hover {
+  background: #3b2070;
+}
+
+.mpr-btn.volume3d-btn.active {
+  background: #7c3aed;
+  color: #fff;
+}
+
+.select-control {
+  width: 100%;
+  padding: 4px 8px;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.select-control:focus {
+  outline: none;
+  border-color: #7c3aed;
+}
+
 .drop-overlay.active .drop-overlay__hint {
   color: #00d9ff;
 }

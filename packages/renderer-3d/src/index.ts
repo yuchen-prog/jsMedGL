@@ -7,11 +7,12 @@ export type {
   VolumeCameraState,
   RaycastingConfig,
   VolumeRenderer,
-  VolumeRenderView,
   AxisLabel,
   OrientationCubeConfig,
   VolumeRenderStats,
 } from './types';
+
+export type { VolumeRenderView } from './types';
 
 export {
   DEFAULT_RAYCASTING_CONFIG,
@@ -34,4 +35,3 @@ export { WebGLVolumeRenderer } from './WebGLVolumeRenderer';
 export { OrientationCube } from './OrientationCube';
 
 export { createVolumeRenderView } from './VolumeRenderView';
-export type { VolumeRenderView } from './VolumeRenderView';

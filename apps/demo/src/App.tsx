@@ -2,6 +2,8 @@
 import { memo, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { parseNifti } from '@jsmedgl/parser-nifti';
 import { createWebGLSliceView, type WebGLSliceView } from '@jsmedgl/renderer-2d';
+import { createVolumeRenderView, type VolumeRenderView } from '@jsmedgl/renderer-3d';
+import type { CompositingMode, ColormapName } from '@jsmedgl/renderer-3d';
 import {
   createObliquePlane,
   createObliqueExtractor,
@@ -971,19 +973,185 @@ function SingleViewer({ volume, crosshair, windowLevel, onCrosshairChange }: Sin
   );
 }
 
+// ─── Volume Viewer (3D Raycasting) ─────────────────────────────────────────
+
+const COLORMAP_OPTIONS: Array<{ value: ColormapName; label: string }> = [
+  { value: 'grayscale', label: 'Grayscale' },
+  { value: 'hot', label: 'Hot' },
+  { value: 'bone', label: 'Bone' },
+  { value: 'airways', label: 'Airways' },
+  { value: 'angiography', label: 'Angio' },
+  { value: 'pet', label: 'PET' },
+  { value: 'soft_tissue', label: 'Soft Tissue' },
+  { value: 'lung', label: 'Lung' },
+  { value: 'iron', label: 'Iron' },
+  { value: 'viridis', label: 'Viridis' },
+];
+
+const COMPOSITING_OPTIONS: Array<{ value: CompositingMode; label: string }> = [
+  { value: 'standard', label: 'Standard' },
+  { value: 'mip', label: 'MIP' },
+  { value: 'minip', label: 'MinIP' },
+  { value: 'average', label: 'Average' },
+];
+
+// Normalize 2D W/L (0-255) to 3D W/L (0-1)
+function normalizeWL(w: number, l: number): { window: number; level: number } {
+  return { window: w / 255, level: l / 255 };
+}
+
+interface VolumeViewerProps {
+  volume: NiftiVolume;
+  windowLevel: WindowLevelState;
+  compositingMode: CompositingMode;
+  colormap: ColormapName;
+  gradientLighting: boolean;
+  resetTrigger?: number;
+}
+
+function VolumeViewer({ volume, windowLevel, compositingMode, colormap, gradientLighting, resetTrigger }: VolumeViewerProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<VolumeRenderView | null>(null);
+
+  // Create/destroy VolumeRenderView
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const view = createVolumeRenderView(container, {
+      orientationCube: { size: 80, position: 'bottom-right' },
+    });
+    viewRef.current = view;
+    view.setVolume(volume);
+
+    return () => {
+      view.dispose();
+      viewRef.current = null;
+    };
+  }, [volume]);
+
+  // Reset camera when trigger changes
+  useEffect(() => {
+    if (resetTrigger && viewRef.current) {
+      viewRef.current.setCamera({
+        theta: Math.PI / 4,
+        phi: Math.PI / 4,
+        distance: 2.5,
+        target: [0.5, 0.5, 0.5],
+      });
+    }
+  }, [resetTrigger]);
+
+  // Sync compositing mode
+  useEffect(() => {
+    viewRef.current?.setCompositingMode(compositingMode);
+  }, [compositingMode]);
+
+  // Sync colormap
+  useEffect(() => {
+    viewRef.current?.setColormap(colormap);
+  }, [colormap]);
+
+  // Sync gradient lighting
+  useEffect(() => {
+    viewRef.current?.setGradientLighting(gradientLighting);
+  }, [gradientLighting]);
+
+  // Sync window/level from 2D to 3D
+  useEffect(() => {
+    const nl = normalizeWL(windowLevel.window, windowLevel.level);
+    viewRef.current?.setWindowLevel(nl.window, nl.level);
+  }, [windowLevel]);
+
+  return (
+    <div className="viewer-volume3d">
+      <div ref={containerRef} className="viewer-volume3d__canvas" />
+    </div>
+  );
+}
+
+// ─── 3D Volume Render Controls ─────────────────────────────────────────────
+
+interface Volume3DControlsProps {
+  compositingMode: CompositingMode;
+  colormap: ColormapName;
+  gradientLighting: boolean;
+  onCompositingModeChange: (mode: CompositingMode) => void;
+  onColormapChange: (cm: ColormapName) => void;
+  onGradientLightingChange: (enabled: boolean) => void;
+  onResetCamera: () => void;
+}
+
+function Volume3DControls({
+  compositingMode,
+  colormap,
+  gradientLighting,
+  onCompositingModeChange,
+  onColormapChange,
+  onGradientLightingChange,
+  onResetCamera,
+}: Volume3DControlsProps) {
+  return (
+    <div className="sidebar__section">
+      <div className="sidebar__section-title">3D Render</div>
+
+      <div className="control-row">
+        <label className="control-row__label">Projection</label>
+        <select
+          className="select-control"
+          value={compositingMode}
+          onChange={e => onCompositingModeChange(e.target.value as CompositingMode)}
+        >
+          {COMPOSITING_OPTIONS.map(o => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="control-row">
+        <label className="control-row__label">Colormap</label>
+        <select
+          className="select-control"
+          value={colormap}
+          onChange={e => onColormapChange(e.target.value as ColormapName)}
+        >
+          {COLORMAP_OPTIONS.map(o => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="control-row">
+        <label className="control-row__label">
+          <input
+            type="checkbox"
+            checked={gradientLighting}
+            onChange={e => onGradientLightingChange(e.target.checked)}
+          />
+          {' '}Lighting
+        </label>
+      </div>
+
+      <button className="preset-btn" onClick={onResetCamera}>
+        Reset Camera
+      </button>
+    </div>
+  );
+}
+
 // ─── Header ─────────────────────────────────────────────────────────────────
 
 function Header({ viewMode, mprEnabled, crosshair, onViewModeChange }: {
-  viewMode: 'single' | 'mpr' | 'oblique';
+  viewMode: 'single' | 'mpr' | 'oblique' | 'volume3d';
   mprEnabled: boolean;
   crosshair: CrosshairPosition | null;
-  onViewModeChange: (mode: 'single' | 'mpr' | 'oblique') => void;
+  onViewModeChange: (mode: 'single' | 'mpr' | 'oblique' | 'volume3d') => void;
 }) {
   return (
     <header className="header">
       <span className="header__title">jsMed (WebGL)</span>
       <div className="header__controls">
-        {crosshair && viewMode !== 'oblique' && (
+        {crosshair && viewMode !== 'oblique' && viewMode !== 'volume3d' && (
           <span className="header__coords">
             I:{crosshair.i} J:{crosshair.j} K:{crosshair.k}
           </span>
@@ -1001,6 +1169,12 @@ function Header({ viewMode, mprEnabled, crosshair, onViewModeChange }: {
           onClick={() => onViewModeChange(viewMode === 'oblique' ? 'single' : 'oblique')}
         >
           {viewMode === 'oblique' ? 'Exit Oblique' : 'Oblique'}
+        </button>
+        <button
+          className={`mpr-btn volume3d-btn${viewMode === 'volume3d' ? ' active' : ''}`}
+          onClick={() => onViewModeChange(viewMode === 'volume3d' ? 'single' : 'volume3d')}
+        >
+          {viewMode === 'volume3d' ? 'Exit 3D' : '3D Volume'}
         </button>
         <span className="header__version">v0.1.0</span>
       </div>
@@ -1123,7 +1297,7 @@ function LoadingSpinner() {
 
 export default function App() {
   const [volume, setVolume] = useState<NiftiVolume | null>(null);
-  const [viewMode, setViewMode] = useState<'single' | 'mpr' | 'oblique'>('single');
+  const [viewMode, setViewMode] = useState<'single' | 'mpr' | 'oblique' | 'volume3d'>('single');
   const [isDragOver, setIsDragOver] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -1131,6 +1305,11 @@ export default function App() {
   const autoLoadRan = useRef(false);
   const [windowLevel, setWindowLevel] = useState<WindowLevelState>({ window: 255, level: 128 });
   const [crosshair, setCrosshair] = useState<CrosshairPosition | null>(null);
+  // 3D volume rendering state
+  const [compositingMode, setCompositingMode] = useState<CompositingMode>('standard');
+  const [colormap, setColormap] = useState<ColormapName>('grayscale');
+  const [gradientLighting, setGradientLighting] = useState(true);
+  const [resetTrigger, setResetTrigger] = useState(0);
 
   // Derive initial crosshair from volume dimensions
   const initialCrosshair = useMemo<CrosshairPosition | null>(() => {
@@ -1220,6 +1399,17 @@ export default function App() {
           {volume && (
             <ViewControls windowLevel={windowLevel} onWindowLevelChange={setWindowLevel} />
           )}
+          {viewMode === 'volume3d' && volume && (
+            <Volume3DControls
+              compositingMode={compositingMode}
+              colormap={colormap}
+              gradientLighting={gradientLighting}
+              onCompositingModeChange={setCompositingMode}
+              onColormapChange={setColormap}
+              onGradientLightingChange={setGradientLighting}
+              onResetCamera={() => setResetTrigger(t => t + 1)}
+            />
+          )}
         </aside>
         {isLoading ? (
           <div className="viewer-area">
@@ -1236,12 +1426,23 @@ export default function App() {
               onCrosshairChange={setCrosshair}
             />
           ) : crosshair ? (
-            <SingleViewer
-              volume={volume}
-              crosshair={crosshair}
-              windowLevel={windowLevel}
-              onCrosshairChange={setCrosshair}
-            />
+            viewMode === 'volume3d' ? (
+              <VolumeViewer
+                volume={volume}
+                windowLevel={windowLevel}
+                compositingMode={compositingMode}
+                colormap={colormap}
+                gradientLighting={gradientLighting}
+                resetTrigger={resetTrigger}
+              />
+            ) : (
+              <SingleViewer
+                volume={volume}
+                crosshair={crosshair}
+                windowLevel={windowLevel}
+                onCrosshairChange={setCrosshair}
+              />
+            )
           ) : null
         ) : (
           <div
