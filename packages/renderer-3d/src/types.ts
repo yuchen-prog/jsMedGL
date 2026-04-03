@@ -152,6 +152,8 @@ export interface VolumeRenderView {
   on(event: 'render' | 'cameraChange', cb: (data: unknown) => void): void;
   /** Unsubscribe from events */
   off(event: 'render' | 'cameraChange', cb: (data: unknown) => void): void;
+  /** Trigger a render frame manually */
+  render(): void;
   /** Release all resources and remove canvas */
   dispose(): void;
 }

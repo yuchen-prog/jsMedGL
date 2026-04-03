@@ -32,3 +32,6 @@ export { TransferFunction } from './TransferFunction';
 export { WebGLVolumeRenderer } from './WebGLVolumeRenderer';
 
 export { OrientationCube } from './OrientationCube';
+
+export { createVolumeRenderView } from './VolumeRenderView';
+export type { VolumeRenderView } from './VolumeRenderView';
