@@ -24,6 +24,7 @@ export default defineConfig({
       '@jsmedgl/parser-nifti': resolve(__dirname, 'packages/parser-nifti/src'),
       '@jsmedgl/react': resolve(__dirname, 'packages/react/src'),
       '@jsmedgl/renderer-2d': resolve(__dirname, 'packages/renderer-2d/src'),
+      '@jsmedgl/renderer-3d': resolve(__dirname, 'packages/renderer-3d/src'),
     },
   },
 });

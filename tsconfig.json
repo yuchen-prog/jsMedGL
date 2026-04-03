@@ -32,7 +32,9 @@
       "@jsmedgl/react": ["./packages/react/src"],
       "@jsmedgl/react/*": ["./packages/react/src/*"],
       "@jsmedgl/renderer-2d": ["./packages/renderer-2d/src"],
-      "@jsmedgl/renderer-2d/*": ["./packages/renderer-2d/src/*"]
+      "@jsmedgl/renderer-2d/*": ["./packages/renderer-2d/src/*"],
+      "@jsmedgl/renderer-3d": ["./packages/renderer-3d/src"],
+      "@jsmedgl/renderer-3d/*": ["./packages/renderer-3d/src/*"]
     }
   }
 }
