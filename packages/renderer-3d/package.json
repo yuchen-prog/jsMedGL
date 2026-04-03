@@ -1,0 +1,38 @@
+{
+  "name": "@jsmedgl/renderer-3d",
+  "version": "0.1.0",
+  "description": "3D volume renderer for medical imaging (raycasting, MIP, gradient lighting)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "medical-imaging",
+    "volume-rendering",
+    "raycasting",
+    "webgl",
+    "3d-rendering"
+  ],
+  "author": "jsMedgl Team",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@jsmedgl/parser-nifti": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}
