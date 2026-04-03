@@ -2,7 +2,7 @@
 
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
 import type { CompositingMode, RaycastingConfig, VolumeCameraState } from './types';
-import { DEFAULT_RAYCASTING_CONFIG, DEFAULT_CAMERA_STATE } from './types';
+import { DEFAULT_RAYCASTING_CONFIG } from './types';
 import { VolumeTextureManager } from './VolumeTextureManager';
 import { VolumeCamera } from './VolumeCamera';
 import { TransferFunction } from './TransferFunction';
@@ -231,23 +231,36 @@ export class WebGLVolumeRenderer {
   }
 
   setCamera(state: Partial<VolumeCameraState>): void {
-    this.camera.orbit(0, 0); // Force dirty flag — actual values set below
-    if (state.theta !== undefined || state.phi !== undefined) {
-      // Reset then set
-      const current = this.camera.getState();
-      this.camera.reset();
-      this.camera.orbit(
-        state.theta ?? current.theta - DEFAULT_CAMERA_STATE.theta,
-        state.phi ?? current.phi - DEFAULT_CAMERA_STATE.phi
-      );
+    const current = this.camera.getState();
+
+    // Set theta: delta = new - current
+    if (state.theta !== undefined) {
+      const delta = state.theta - current.theta;
+      this.camera.orbit(delta, 0);
     }
+
+    // Set phi: delta = new - current
+    if (state.phi !== undefined) {
+      const delta = state.phi - current.phi;
+      this.camera.orbit(0, delta);
+    }
+
+    // Set distance: delta = new - current
     if (state.distance !== undefined) {
-      this.camera.zoom(state.distance - this.camera.getState().distance);
+      const delta = state.distance - current.distance;
+      this.camera.zoom(delta);
     }
+
+    // Reset to target, then pan to new target
     if (state.target !== undefined) {
-      // Pan to new target (simplified)
-      const cam = this.camera as unknown as { target: [number, number, number] };
-      cam.target = [...state.target] as [number, number, number];
+      const delta = [
+        state.target[0] - current.target[0],
+        state.target[1] - current.target[1],
+        state.target[2] - current.target[2],
+      ];
+      // Approximate: use pan with scaled delta
+      const scale = 1000 / (this.camera.getState().distance || 2.5);
+      this.camera.pan(delta[0] * scale, -delta[1] * scale);
     }
   }
 
