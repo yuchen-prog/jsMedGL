@@ -15,14 +15,14 @@ const COMPOSITING_MODE_MAP: Record<CompositingMode, number> = {
   average: 3,
 };
 
-// Shader sources (inline to avoid import complexity)
-const VERT_SRC = `
-attribute vec2 a_position;
+// Shader sources — GLSL ES 3.0 (WebGL2 required for sampler3D)
+const VERT_SRC = `#version 300 es
+in vec2 a_position;
 uniform mat4 u_inverseViewMatrix;
 uniform vec3 u_cameraPosition;
 uniform float u_aspect;
-varying vec3 v_rayOrigin;
-varying vec3 v_rayDir;
+out vec3 v_rayOrigin;
+out vec3 v_rayDir;
 
 void main() {
   vec2 ndc = a_position;
@@ -37,20 +37,21 @@ void main() {
 }
 `;
 
-const FRAG_SRC = `
+const FRAG_SRC = `#version 300 es
 precision highp float;
 
 uniform sampler3D u_volumeTexture;
 uniform sampler2D u_colorLUT;
 uniform sampler2D u_opacityLUT;
-varying vec3 v_rayOrigin;
-varying vec3 v_rayDir;
+in vec3 v_rayOrigin;
+in vec3 v_rayDir;
 uniform float u_window;
 uniform float u_level;
 uniform int u_compositingMode;
 uniform float u_stepSize;
 uniform bool u_gradientLighting;
 uniform vec3 u_lightDir;
+out vec4 fragColor;
 
 const vec3 BOX_MIN = vec3(0.0);
 const vec3 BOX_MAX = vec3(1.0);
@@ -92,7 +93,7 @@ void main() {
   float tFar = hit.y;
 
   if (tNear > tFar || tFar < 0.0) {
-    gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+    fragColor = vec4(0.0, 0.0, 0.0, 0.0);
     return;
   }
 
@@ -104,7 +105,7 @@ void main() {
 
   float numSteps = min(rayLength / u_stepSize, 512.0);
   if (numSteps < 1.0) {
-    gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+    fragColor = vec4(0.0, 0.0, 0.0, 0.0);
     return;
   }
 
@@ -152,16 +153,16 @@ void main() {
 
   if (u_compositingMode == 1) {
     float w = clamp((maxIntensity - u_level) / u_window + 0.5, 0.0, 1.0);
-    gl_FragColor = vec4(texture(u_colorLUT, vec2(w, 0.5)).rgb, 1.0);
+    fragColor = vec4(texture(u_colorLUT, vec2(w, 0.5)).rgb, 1.0);
   } else if (u_compositingMode == 2) {
     float w = clamp((minIntensity - u_level) / u_window + 0.5, 0.0, 1.0);
-    gl_FragColor = vec4(texture(u_colorLUT, vec2(w, 0.5)).rgb, 1.0);
+    fragColor = vec4(texture(u_colorLUT, vec2(w, 0.5)).rgb, 1.0);
   } else if (u_compositingMode == 3) {
     float avg = sumIntensity / max(float(actualSteps), 1.0);
     float w = clamp((avg - u_level) / u_window + 0.5, 0.0, 1.0);
-    gl_FragColor = vec4(texture(u_colorLUT, vec2(w, 0.5)).rgb, 1.0);
+    fragColor = vec4(texture(u_colorLUT, vec2(w, 0.5)).rgb, 1.0);
   } else {
-    gl_FragColor = accumulated;
+    fragColor = accumulated;
   }
 }
 `;
@@ -174,6 +175,7 @@ export class WebGLVolumeRenderer {
   private gl: WebGL2RenderingContext;
   private program: WebGLProgram | null = null;
   private quadBuffer: WebGLBuffer | null = null;
+  private vao: WebGLVertexArrayObject | null = null;
   private textureManager: VolumeTextureManager;
   private camera: VolumeCamera;
   private transferFunction: TransferFunction;
@@ -324,11 +326,9 @@ export class WebGLVolumeRenderer {
     );
 
     // Draw full-screen quad
-    const posLoc = gl.getAttribLocation(this.program, 'a_position');
-    gl.enableVertexAttribArray(posLoc);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
-    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
   }
 
   dispose(): void {
@@ -344,6 +344,10 @@ export class WebGLVolumeRenderer {
     if (this.quadBuffer) {
       gl.deleteBuffer(this.quadBuffer);
       this.quadBuffer = null;
+    }
+    if (this.vao) {
+      gl.deleteVertexArray(this.vao);
+      this.vao = null;
     }
   }
 
@@ -400,10 +404,21 @@ export class WebGLVolumeRenderer {
 
   private initQuad(): void {
     const gl = this.gl;
+
+    // Create VAO for the full-screen quad
+    this.vao = gl.createVertexArray();
+    gl.bindVertexArray(this.vao);
+
     this.quadBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
       -1, -1,  1, -1,  -1, 1,  1, 1
     ]), gl.STATIC_DRAW);
+
+    const posLoc = gl.getAttribLocation(this.program!, 'a_position');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    gl.bindVertexArray(null);
   }
 }
