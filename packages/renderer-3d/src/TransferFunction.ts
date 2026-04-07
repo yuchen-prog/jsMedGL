@@ -219,7 +219,7 @@ export class TransferFunction {
     const data = buildColorLUT(colormap);
     gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
     gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.RGB,
+      gl.TEXTURE_2D, 0, gl.RGB8,
       256, 1, 0,
       gl.RGB, gl.UNSIGNED_BYTE, data
     );
@@ -230,7 +230,7 @@ export class TransferFunction {
     const data = buildOpacityLUT(window, level);
     gl.bindTexture(gl.TEXTURE_2D, this.opacityTexture);
     gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.RED,
+      gl.TEXTURE_2D, 0, gl.R8,
       256, 1, 0,
       gl.RED, gl.UNSIGNED_BYTE, data
     );

@@ -39,6 +39,8 @@ void main() {
 
 const FRAG_SRC = `#version 300 es
 precision highp float;
+precision highp sampler3D;
+precision highp sampler2D;
 
 uniform sampler3D u_volumeTexture;
 uniform sampler2D u_colorLUT;
