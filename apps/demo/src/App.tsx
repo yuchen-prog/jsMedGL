@@ -3,6 +3,7 @@ import { memo, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { parseNifti } from '@jsmedgl/parser-nifti';
 import { createWebGLSliceView, type WebGLSliceView } from '@jsmedgl/renderer-2d';
 import { createVolumeRenderView, type VolumeRenderView } from '@jsmedgl/renderer-3d';
+import { DEFAULT_CAMERA_STATE } from '@jsmedgl/renderer-3d';
 import type { CompositingMode, ColormapName } from '@jsmedgl/renderer-3d';
 import {
   createObliquePlane,
@@ -1034,8 +1035,7 @@ function VolumeViewer({ volume, windowLevel, compositingMode, colormap, gradient
   useEffect(() => {
     if (resetTrigger && viewRef.current) {
       viewRef.current.setCamera({
-        theta: Math.PI / 4,
-        phi: Math.PI / 4,
+        rotation: DEFAULT_CAMERA_STATE.rotation,
         distance: 2.5,
         target: [0.5, 0.5, 0.5],
       });
