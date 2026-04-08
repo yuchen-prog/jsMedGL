@@ -10,6 +10,7 @@ export type {
   AxisLabel,
   OrientationCubeConfig,
   VolumeRenderStats,
+  TissuePreset,
 } from './types';
 
 export type { VolumeRenderView } from './types';
@@ -18,6 +19,7 @@ export {
   DEFAULT_RAYCASTING_CONFIG,
   DEFAULT_CAMERA_STATE,
   DEFAULT_ORIENTATION_CUBE_CONFIG,
+  TISSUE_PRESETS,
 } from './types';
 
 export { VolumeTextureManager } from './VolumeTextureManager';

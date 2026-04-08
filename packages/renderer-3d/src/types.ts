@@ -143,14 +143,16 @@ export interface VolumeRenderView {
   setWindowLevel(window: number, level: number): void;
   /** Enable/disable gradient lighting */
   setGradientLighting(enabled: boolean): void;
+  /** Apply a tissue preset (sets colormap + window/level) */
+  applyPreset(preset: TissuePreset): void;
   /** Set camera state (partial) */
   setCamera(state: Partial<VolumeCameraState>): void;
   /** Get current camera state */
   getCamera(): VolumeCameraState;
   /** Subscribe to events */
-  on(event: 'render' | 'cameraChange', cb: (data: unknown) => void): void;
+  on(event: 'render' | 'cameraChange' | 'windowLevelChange', cb: (data: unknown) => void): void;
   /** Unsubscribe from events */
-  off(event: 'render' | 'cameraChange', cb: (data: unknown) => void): void;
+  off(event: 'render' | 'cameraChange' | 'windowLevelChange', cb: (data: unknown) => void): void;
   /** Trigger a render frame manually */
   render(): void;
   /** Release all resources and remove canvas */
@@ -183,6 +185,36 @@ export const DEFAULT_ORIENTATION_CUBE_CONFIG: OrientationCubeConfig = {
   size: 100,
   position: 'bottom-right',
 };
+
+// ============================================
+// Tissue Presets
+// ============================================
+
+/**
+ * Tissue preset: binds colormap + window + level for one-click switching.
+ * Window/level values are in 2D absolute scale (0-255 range).
+ */
+export interface TissuePreset {
+  label: string;
+  window: number;
+  level: number;
+  colormap: ColormapName;
+}
+
+/**
+ * Predefined tissue presets.
+ * Window/level values use the normalized 0-255 range (matching Uint8Array normalization).
+ */
+export const TISSUE_PRESETS: TissuePreset[] = [
+  { label: 'Default',      window: 255,  level: 128,  colormap: 'grayscale'    },
+  { label: 'Brain',        window: 80,   level: 40,   colormap: 'grayscale'    },
+  { label: 'Bone',         window: 200,  level: 200,  colormap: 'bone'         },
+  { label: 'Lung',         window: 180,  level: 50,   colormap: 'lung'         },
+  { label: 'Soft Tissue',  window: 120,  level: 100,  colormap: 'soft_tissue'  },
+  { label: 'Angiography',  window: 150,  level: 160,  colormap: 'angiography'  },
+  { label: 'PET',          window: 255,  level: 127,  colormap: 'pet'          },
+  { label: 'Airways',      window: 160,  level: 60,   colormap: 'airways'      },
+];
 
 // ============================================
 // Render Stats

@@ -6,6 +6,7 @@ import type {
   ColormapName,
   VolumeCameraState,
   OrientationCubeConfig,
+  TissuePreset,
 } from './types';
 import { DEFAULT_ORIENTATION_CUBE_CONFIG } from './types';
 import { WebGLVolumeRenderer } from './WebGLVolumeRenderer';
@@ -13,7 +14,8 @@ import { OrientationCube } from './OrientationCube';
 
 type RenderEventData = Record<string, unknown>;
 type CameraEventData = { state: VolumeCameraState };
-type VolumeRenderViewEvent = 'render' | 'cameraChange';
+type WindowLevelEventData = { window: number; level: number };
+type VolumeRenderViewEvent = 'render' | 'cameraChange' | 'windowLevelChange';
 
 /**
  * Simple event emitter for VolumeRenderView
@@ -180,6 +182,23 @@ export class VolumeRenderViewImpl {
     this.scheduleRender();
   }
 
+  applyPreset(preset: TissuePreset): void {
+    const nl = { window: preset.window / 255, level: preset.level / 255 };
+    this.config.colormap = preset.colormap;
+    this.config.window = nl.window;
+    this.config.level = nl.level;
+    this.renderer.setConfig({
+      transferFunction: {
+        colormap: preset.colormap,
+        window: nl.window,
+        level: nl.level,
+        gradientLighting: this.config.gradientLighting,
+      },
+    });
+    this.emitter.emit('windowLevelChange', { window: nl.window, level: nl.level } satisfies WindowLevelEventData);
+    this.scheduleRender();
+  }
+
   setGradientLighting(enabled: boolean): void {
     this.config.gradientLighting = enabled;
     this.renderer.setConfig({
@@ -306,6 +325,7 @@ export class VolumeRenderViewImpl {
     this.canvas.addEventListener('wheel', this.handleWheel, { passive: false });
     this.canvas.addEventListener('dblclick', this.handleDblClick);
     this.canvas.addEventListener('contextmenu', e => e.preventDefault());
+    this.canvas.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
 
     // Global mouse move/up for drag tracking
     window.addEventListener('mousemove', this.handleMouseMove);
@@ -343,17 +363,33 @@ export class VolumeRenderViewImpl {
     this.drag.lastX = e.clientX;
     this.drag.lastY = e.clientY;
 
-    const sensitivity = 0.005; // radians per pixel
-
     if (this.drag.button === 0) {
       // Left button: orbit
+      const sensitivity = 0.005;
       this.renderer.getCameraObject().orbit(-dx * sensitivity, -dy * sensitivity);
+      this.emitter.emit('cameraChange', { state: this.renderer.getCamera() } satisfies CameraEventData);
+    } else if (this.drag.button === 1) {
+      // Middle button: window/level
+      const sensitivity = 0.005;
+      const newWindow = Math.max(0.01, Math.min(1.0, this.config.window + dx * sensitivity));
+      const newLevel = Math.max(0.0, Math.min(1.0, this.config.level - dy * sensitivity));
+      this.config.window = newWindow;
+      this.config.level = newLevel;
+      this.renderer.setConfig({
+        transferFunction: {
+          colormap: this.config.colormap,
+          window: newWindow,
+          level: newLevel,
+          gradientLighting: this.config.gradientLighting,
+        },
+      });
+      this.emitter.emit('windowLevelChange', { window: newWindow, level: newLevel } satisfies WindowLevelEventData);
     } else if (this.drag.button === 2) {
       // Right button: pan
       this.renderer.getCameraObject().pan(-dx, dy);
+      this.emitter.emit('cameraChange', { state: this.renderer.getCamera() } satisfies CameraEventData);
     }
 
-    this.emitter.emit('cameraChange', { state: this.renderer.getCamera() } satisfies CameraEventData);
     this.scheduleRender();
   };
 

@@ -3,7 +3,7 @@ import { memo, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { parseNifti } from '@jsmedgl/parser-nifti';
 import { createWebGLSliceView, type WebGLSliceView } from '@jsmedgl/renderer-2d';
 import { createVolumeRenderView, type VolumeRenderView } from '@jsmedgl/renderer-3d';
-import { DEFAULT_CAMERA_STATE } from '@jsmedgl/renderer-3d';
+import { DEFAULT_CAMERA_STATE, TISSUE_PRESETS } from '@jsmedgl/renderer-3d';
 import type { CompositingMode, ColormapName } from '@jsmedgl/renderer-3d';
 import {
   createObliquePlane,
@@ -31,7 +31,9 @@ interface WindowLevelState {
 const WL_PRESETS: Array<{ label: string; window: number; level: number }> = [
   { label: 'Default', window: 255, level: 128 },
   { label: 'Brain', window: 80, level: 40 },
-  { label: 'Bone', window: 2000, level: 500 },
+  { label: 'Bone', window: 200, level: 200 },
+  { label: 'Lung', window: 180, level: 50 },
+  { label: 'Soft Tissue', window: 120, level: 100 },
 ];
 
 // ─── Orientation Colors ──────────────────────────────────────────────────────
@@ -1008,9 +1010,10 @@ interface VolumeViewerProps {
   colormap: ColormapName;
   gradientLighting: boolean;
   resetTrigger?: number;
+  onWindowLevelChange?: (wl: WindowLevelState) => void;
 }
 
-function VolumeViewer({ volume, windowLevel, compositingMode, colormap, gradientLighting, resetTrigger }: VolumeViewerProps) {
+function VolumeViewer({ volume, windowLevel, compositingMode, colormap, gradientLighting, resetTrigger, onWindowLevelChange }: VolumeViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<VolumeRenderView | null>(null);
 
@@ -1063,6 +1066,23 @@ function VolumeViewer({ volume, windowLevel, compositingMode, colormap, gradient
     viewRef.current?.setWindowLevel(nl.window, nl.level);
   }, [windowLevel]);
 
+  // Sync window/level from 3D back to 2D (middle-button drag)
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !onWindowLevelChange) return;
+
+    const handler = (data: unknown) => {
+      const { window: w, level: l } = data as { window: number; level: number };
+      const ww = Math.round(w * 255);
+      const wl = Math.round(l * 255);
+      if (windowLevel.window !== ww || windowLevel.level !== wl) {
+        onWindowLevelChange({ window: ww, level: wl });
+      }
+    };
+    view.on('windowLevelChange', handler);
+    return () => { view.off('windowLevelChange', handler); };
+  }, [onWindowLevelChange, windowLevel.window, windowLevel.level]);
+
   return (
     <div className="viewer-volume3d">
       <div ref={containerRef} className="viewer-volume3d__canvas" />
@@ -1079,6 +1099,7 @@ interface Volume3DControlsProps {
   onCompositingModeChange: (mode: CompositingMode) => void;
   onColormapChange: (cm: ColormapName) => void;
   onGradientLightingChange: (enabled: boolean) => void;
+  onWindowLevelChange: (wl: WindowLevelState) => void;
   onResetCamera: () => void;
 }
 
@@ -1089,11 +1110,30 @@ function Volume3DControls({
   onCompositingModeChange,
   onColormapChange,
   onGradientLightingChange,
+  onWindowLevelChange,
   onResetCamera,
 }: Volume3DControlsProps) {
   return (
     <div className="sidebar__section">
       <div className="sidebar__section-title">3D Render</div>
+
+      <div className="control-row">
+        <label className="control-row__label">Presets</label>
+        <div className="preset-grid">
+          {TISSUE_PRESETS.map(p => (
+            <button
+              key={p.label}
+              className="preset-btn"
+              onClick={() => {
+                onWindowLevelChange({ window: p.window, level: p.level });
+                onColormapChange(p.colormap);
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="control-row">
         <label className="control-row__label">Projection</label>
@@ -1407,6 +1447,7 @@ export default function App() {
               onCompositingModeChange={setCompositingMode}
               onColormapChange={setColormap}
               onGradientLightingChange={setGradientLighting}
+              onWindowLevelChange={setWindowLevel}
               onResetCamera={() => setResetTrigger(t => t + 1)}
             />
           )}
@@ -1434,6 +1475,7 @@ export default function App() {
                 colormap={colormap}
                 gradientLighting={gradientLighting}
                 resetTrigger={resetTrigger}
+                onWindowLevelChange={setWindowLevel}
               />
             ) : (
               <SingleViewer

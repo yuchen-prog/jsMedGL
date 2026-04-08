@@ -194,6 +194,19 @@
   color: #000;
 }
 
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.preset-grid .preset-btn {
+  padding: 5px 8px;
+  font-size: 11px;
+  text-align: center;
+}
+
 /* ─── Viewer Area ─────────────────────────────────────────────────────── */
 .viewer-area {
   flex: 1;
