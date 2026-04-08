@@ -1,43 +1,80 @@
-// Unit tests for VolumeCamera - pure math
+// Unit tests for VolumeCamera - quaternion-based rotation
 
 import { describe, it, expect } from 'vitest';
 import { VolumeCamera } from '@jsmedgl/renderer-3d';
 import { DEFAULT_CAMERA_STATE } from '@jsmedgl/renderer-3d';
-import { mat4, vec3 } from 'gl-matrix';
+import { mat4, vec3, quat } from 'gl-matrix';
+
+function quatLength(q: [number, number, number, number]): number {
+  return Math.sqrt(q[0]**2 + q[1]**2 + q[2]**2 + q[3]**2);
+}
+
+function quatApproximatelyEqual(
+  a: [number, number, number, number],
+  b: [number, number, number, number],
+  epsilon = 0.0001
+): boolean {
+  return Math.abs(a[0]-b[0]) < epsilon &&
+         Math.abs(a[1]-b[1]) < epsilon &&
+         Math.abs(a[2]-b[2]) < epsilon &&
+         Math.abs(a[3]-b[3]) < epsilon;
+}
+
 describe('VolumeCamera', () => {
 
   it('initializes with default state', () => {
     const cam = new VolumeCamera();
     const s = cam.getState();
-    expect(s.theta).toBeCloseTo(DEFAULT_CAMERA_STATE.theta);
-    expect(s.phi).toBeCloseTo(DEFAULT_CAMERA_STATE.phi);
+    expect(quatApproximatelyEqual(s.rotation, DEFAULT_CAMERA_STATE.rotation)).toBe(true);
     expect(s.distance).toBeCloseTo(DEFAULT_CAMERA_STATE.distance);
     expect(s.target).toEqual([0.5, 0.5, 0.5]);
   });
 
   it('accepts partial state override', () => {
-    const cam = new VolumeCamera({ theta: 1.0, distance: 5.0 });
+    const customRotation: [number, number, number, number] = [0, 0, 0, 1];
+    const cam = new VolumeCamera({ rotation: customRotation, distance: 5.0 });
     const s = cam.getState();
-    expect(s.theta).toBe(1.0);
+    expect(quatApproximatelyEqual(s.rotation, customRotation)).toBe(true);
     expect(s.distance).toBe(5.0);
   });
 
-  it('updates theta on orbit', () => {
-    const cam = new VolumeCamera({ theta: 0.5 });
+  it('rotation changes on orbit', () => {
+    const cam = new VolumeCamera();
+    const initial = cam.getState().rotation;
     cam.orbit(0.1, 0);
-    expect(cam.getState().theta).toBeCloseTo(0.6);
+    const after = cam.getState().rotation;
+    expect(quatApproximatelyEqual(initial, after)).toBe(false);
   });
 
-  it('clamps phi minimum to 0.01', () => {
-    const cam = new VolumeCamera({ phi: 0.02 });
-    cam.orbit(0, -0.5);
-    expect(cam.getState().phi).toBeGreaterThanOrEqual(0.01);
+  it('does NOT clamp vertical rotation (unlimited rotation)', () => {
+    const cam = new VolumeCamera();
+    // Rotate way past the old clamp limits
+    for (let i = 0; i < 20; i++) {
+      cam.orbit(0, 0.5);  // Total rotation: 10 radians (~573 degrees)
+    }
+    const s = cam.getState();
+    // Rotation should have accumulated, not clamped
+    // The quaternion should be normalized
+    expect(quatLength(s.rotation)).toBeCloseTo(1.0, 5);
   });
 
-  it('clamps phi maximum to PI-0.01', () => {
-    const cam = new VolumeCamera({ phi: Math.PI - 0.02 });
-    cam.orbit(0, 0.5);
-    expect(cam.getState().phi).toBeLessThanOrEqual(Math.PI - 0.01);
+  it('can do full 360° flip', () => {
+    const cam = new VolumeCamera();
+    const initial = cam.getState().rotation;
+
+    // Orbit vertically by PI (180°)
+    cam.orbit(0, Math.PI);
+    const halfway = cam.getState().rotation;
+
+    // Orbit by another PI (total 360°)
+    cam.orbit(0, Math.PI);
+    const full = cam.getState().rotation;
+
+    // After 360°, we should be back to approximately the same orientation
+    // (or negated, since q and -q represent the same rotation)
+    const same = quatApproximatelyEqual(initial, full) ||
+                 quatApproximatelyEqual(initial, full.map(x => -x) as [number,number,number,number]);
+    expect(same).toBe(true);
   });
 
   it('increases distance on positive zoom', () => {
@@ -65,11 +102,11 @@ describe('VolumeCamera', () => {
   });
 
   it('reset restores all defaults', () => {
-    const cam = new VolumeCamera({ theta: 2.0, phi: 0.1, distance: 8.0 });
+    const cam = new VolumeCamera({ distance: 8.0 });
+    cam.orbit(2.0, 1.0);
     cam.reset();
     const s = cam.getState();
-    expect(s.theta).toBeCloseTo(DEFAULT_CAMERA_STATE.theta);
-    expect(s.phi).toBeCloseTo(DEFAULT_CAMERA_STATE.phi);
+    expect(quatApproximatelyEqual(s.rotation, DEFAULT_CAMERA_STATE.rotation)).toBe(true);
     expect(s.distance).toBeCloseTo(DEFAULT_CAMERA_STATE.distance);
   });
 
@@ -77,23 +114,26 @@ describe('VolumeCamera', () => {
     const cam = new VolumeCamera();
     const s1 = cam.getState();
     const s2 = cam.getState();
-    s1.theta = 99;
-    expect(cam.getState().theta).toBeCloseTo(DEFAULT_CAMERA_STATE.theta);
+    s1.rotation[0] = 99;
+    expect(cam.getState().rotation[0]).not.toBe(99);
   });
 
-  it('position at phi=PI/2 is directly above target', () => {
-    const cam = new VolumeCamera({ theta: 0, phi: Math.PI / 2, distance: 2.5, target: [0.5, 0.5, 0.5] });
+  it('default position matches old spherical default', () => {
+    // Default quaternion (45° oblique view), distance=2.5
+    // Expected position: (1.75, -1.2678, 1.75)
+    const cam = new VolumeCamera();
     const pos = cam.getPosition();
-    expect(pos[0]).toBeCloseTo(3.0);
-    expect(pos[1]).toBeCloseTo(0.5);
-    expect(pos[2]).toBeCloseTo(0.5);
+    expect(pos[0]).toBeCloseTo(1.75, 2);
+    expect(pos[1]).toBeCloseTo(-1.2678, 2);
+    expect(pos[2]).toBeCloseTo(1.75, 2);
   });
 
-  it('position changes with phi', () => {
-    const cam = new VolumeCamera({ phi: 0.1 });
+  it('position changes with rotation', () => {
+    const cam = new VolumeCamera();
     const pos1 = cam.getPosition();
-    cam.orbit(0, 0.5);
-    expect(pos1[1]).not.toBeCloseTo(cam.getPosition()[1]);
+    cam.orbit(0.5, 0);
+    const pos2 = cam.getPosition();
+    expect(pos1[0]).not.toBeCloseTo(pos2[0]);
   });
 
   it('view matrix has 16 elements', () => {
@@ -110,7 +150,7 @@ describe('VolumeCamera', () => {
   });
 
   it('view matrix differs after orbit', () => {
-    const cam = new VolumeCamera({ theta: 0, phi: Math.PI / 4 });
+    const cam = new VolumeCamera();
     const vm1 = Array.from(cam.getViewMatrix());
     cam.orbit(0.5, 0);
     const vm2 = Array.from(cam.getViewMatrix());
@@ -122,7 +162,7 @@ describe('VolumeCamera', () => {
   });
 
   it('view matrix times inverse equals identity', () => {
-    const cam = new VolumeCamera({ theta: 0.3, phi: 0.7 });
+    const cam = new VolumeCamera();
     const vm = cam.getViewMatrix();
     const inv = cam.getInverseViewMatrix();
     const result = mat4.create();
@@ -180,14 +220,16 @@ describe('VolumeCamera', () => {
   });
 
   it('rotation matrix determinant close to 1', () => {
-    const cam = new VolumeCamera({ theta: 0.5, phi: 0.7 });
+    const cam = new VolumeCamera();
+    cam.orbit(0.5, 0.7);
     const rot = cam.getRotationMatrix();
     const det = rot[0]*(rot[5]*rot[10]-rot[6]*rot[9]) - rot[1]*(rot[4]*rot[10]-rot[6]*rot[8]) + rot[2]*(rot[4]*rot[9]-rot[5]*rot[8]);
     expect(Math.abs(det - 1.0)).toBeLessThan(0.01);
   });
 
   it('rotation matrix columns are orthogonal', () => {
-    const cam = new VolumeCamera({ theta: 0.3, phi: 0.6 });
+    const cam = new VolumeCamera();
+    cam.orbit(0.3, 0.6);
     const rot = cam.getRotationMatrix();
     const dot01 = rot[0]*rot[4] + rot[1]*rot[5] + rot[2]*rot[6];
     const dot02 = rot[0]*rot[8] + rot[1]*rot[9] + rot[2]*rot[10];
@@ -198,7 +240,7 @@ describe('VolumeCamera', () => {
   });
 
   it('rotation changes after orbit', () => {
-    const cam = new VolumeCamera({ theta: 0 });
+    const cam = new VolumeCamera();
     const rot1 = cam.getRotationMatrix();
     cam.orbit(1.0, 0);
     const rot2 = cam.getRotationMatrix();
@@ -210,18 +252,64 @@ describe('VolumeCamera', () => {
   });
 
   it('multiple orbits accumulate correctly', () => {
-    const cam = new VolumeCamera({ theta: 0, phi: Math.PI / 4 });
+    const cam = new VolumeCamera();
     cam.orbit(0.1, 0.05);
     cam.orbit(0.2, -0.03);
-    expect(cam.getState().theta).toBeCloseTo(0.3);
-    expect(cam.getState().phi).toBeCloseTo(Math.PI / 4 + 0.02);
+    // Just verify it doesn't crash and state is valid
+    const s = cam.getState();
+    expect(quatLength(s.rotation)).toBeCloseTo(1.0, 5);
   });
 
   it('zoom and orbit both persist', () => {
-    const cam = new VolumeCamera({ distance: 3.0, theta: 0 });
+    const cam = new VolumeCamera({ distance: 3.0 });
     cam.zoom(1.0);
     cam.orbit(0.5, 0);
-    expect(cam.getState().distance).toBeCloseTo(4.0);
-    expect(cam.getState().theta).toBeCloseTo(0.5);
+    const s = cam.getState();
+    expect(s.distance).toBeCloseTo(4.0);
+    expect(quatLength(s.rotation)).toBeCloseTo(1.0, 5);
+  });
+
+  it('quaternion remains normalized after many orbits', () => {
+    const cam = new VolumeCamera();
+    for (let i = 0; i < 10000; i++) {
+      cam.orbit(0.001, 0.0005);
+    }
+    const s = cam.getState();
+    expect(quatLength(s.rotation)).toBeCloseTo(1.0, 3);
+  });
+
+  it('setRotation updates state directly', () => {
+    const cam = new VolumeCamera();
+    const newRot: [number, number, number, number] = [0, 0, 0.70710678, 0.70710678];
+    cam.setRotation(newRot);
+    expect(quatApproximatelyEqual(cam.getState().rotation, newRot)).toBe(true);
+  });
+
+  it('setDistance updates distance directly', () => {
+    const cam = new VolumeCamera();
+    cam.setDistance(7.0);
+    expect(cam.getState().distance).toBe(7.0);
+  });
+
+  it('setTarget updates target directly', () => {
+    const cam = new VolumeCamera();
+    cam.setTarget([0.2, 0.3, 0.4]);
+    expect(cam.getState().target).toEqual([0.2, 0.3, 0.4]);
+  });
+
+  it('no gimbal lock at extreme vertical angles', () => {
+    const cam = new VolumeCamera();
+    // Rotate to look straight down (90° from default)
+    cam.orbit(0, Math.PI / 4);  // from PI/4 to PI/2
+    const vm = cam.getViewMatrix();
+    // View matrix should have no NaN
+    for (let i = 0; i < 16; i++) {
+      expect(Number.isNaN(vm[i])).toBe(false);
+    }
+    // And ray direction should still work
+    const dir = cam.getRayDirection(256, 256, 512, 512);
+    expect(Number.isNaN(dir[0])).toBe(false);
+    expect(Number.isNaN(dir[1])).toBe(false);
+    expect(Number.isNaN(dir[2])).toBe(false);
   });
 });

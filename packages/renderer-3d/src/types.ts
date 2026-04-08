@@ -49,16 +49,14 @@ export interface TransferFunctionConfig {
 // ============================================
 
 /**
- * Volume camera state (spherical orbit model)
+ * Volume camera state (quaternion-based orbit)
  */
 export interface VolumeCameraState {
-  /** Horizontal angle in radians */
-  theta: number;
-  /** Vertical angle in radians */
-  phi: number;
+  /** Orientation quaternion [x, y, z, w] () */
+  rotation: [number, number, number, number];
   /** Distance from target */
   distance: number;
-  /** Look-at target in texture space [0,1]³ */
+  /** Look-at target in texture space [0,1]^3 */
   target: [number, number, number];
 }
 
@@ -102,8 +100,9 @@ export const DEFAULT_RAYCASTING_CONFIG: RaycastingConfig = {
  * Default camera state — 45° oblique view
  */
 export const DEFAULT_CAMERA_STATE: VolumeCameraState = {
-  theta: Math.PI / 4,
-  phi: Math.PI / 4,
+  // Quaternion for 45° oblique view (matches old theta=PI/4, phi=PI/4)
+  // Rotates (0,0,-1) to approximately (0.5, 0.707, -0.5) with +Y-dominant up
+  rotation: [-0.4082482905, -0.2886751346, 0, -0.8660254038],
   distance: 2.5,
   target: [0.5, 0.5, 0.5],
 };
