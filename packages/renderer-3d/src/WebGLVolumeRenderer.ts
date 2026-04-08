@@ -26,10 +26,10 @@ out vec3 v_rayDir;
 
 void main() {
   vec2 ndc = a_position;
-  float fovScale = 1.0;
-  vec3 right = vec3(u_inverseViewMatrix[0][0], u_inverseViewMatrix[1][0], u_inverseViewMatrix[2][0]);
-  vec3 up = vec3(u_inverseViewMatrix[0][1], u_inverseViewMatrix[1][1], u_inverseViewMatrix[2][1]);
-  vec3 forward = vec3(-u_inverseViewMatrix[0][2], -u_inverseViewMatrix[1][2], -u_inverseViewMatrix[2][2]);
+  float fovScale = 0.414;
+  vec3 right = vec3(u_inverseViewMatrix[0][0], u_inverseViewMatrix[0][1], u_inverseViewMatrix[0][2]);
+  vec3 up = vec3(u_inverseViewMatrix[1][0], u_inverseViewMatrix[1][1], u_inverseViewMatrix[1][2]);
+  vec3 forward = vec3(-u_inverseViewMatrix[2][0], -u_inverseViewMatrix[2][1], -u_inverseViewMatrix[2][2]);
   vec3 dir = normalize(forward + right * ndc.x * u_aspect * fovScale + up * ndc.y * fovScale);
   v_rayOrigin = u_cameraPosition;
   v_rayDir = dir;
@@ -235,36 +235,14 @@ export class WebGLVolumeRenderer {
   }
 
   setCamera(state: Partial<VolumeCameraState>): void {
-    const current = this.camera.getState();
-
-    // Set theta: delta = new - current
-    if (state.theta !== undefined) {
-      const delta = state.theta - current.theta;
-      this.camera.orbit(delta, 0);
+    if (state.rotation !== undefined) {
+      this.camera.setRotation(state.rotation);
     }
-
-    // Set phi: delta = new - current
-    if (state.phi !== undefined) {
-      const delta = state.phi - current.phi;
-      this.camera.orbit(0, delta);
-    }
-
-    // Set distance: delta = new - current
     if (state.distance !== undefined) {
-      const delta = state.distance - current.distance;
-      this.camera.zoom(delta);
+      this.camera.setDistance(state.distance);
     }
-
-    // Reset to target, then pan to new target
     if (state.target !== undefined) {
-      const delta = [
-        state.target[0] - current.target[0],
-        state.target[1] - current.target[1],
-        state.target[2] - current.target[2],
-      ];
-      // Approximate: use pan with scaled delta
-      const scale = 1000 / (this.camera.getState().distance || 2.5);
-      this.camera.pan(delta[0] * scale, -delta[1] * scale);
+      this.camera.setTarget(state.target);
     }
   }
 

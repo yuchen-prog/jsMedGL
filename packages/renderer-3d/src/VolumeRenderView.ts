@@ -347,7 +347,7 @@ export class VolumeRenderViewImpl {
 
     if (this.drag.button === 0) {
       // Left button: orbit
-      this.renderer.getCameraObject().orbit(dx * sensitivity, -dy * sensitivity);
+      this.renderer.getCameraObject().orbit(-dx * sensitivity, -dy * sensitivity);
     } else if (this.drag.button === 2) {
       // Right button: pan
       this.renderer.getCameraObject().pan(-dx, dy);
