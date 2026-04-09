@@ -70,12 +70,16 @@ export class VolumeRenderViewImpl {
     window: number;
     level: number;
     orientationCube: OrientationCubeConfig;
+    jitterEnabled: boolean;
+    gradientBlendFactor: number;
   } = {
     colormap: 'grayscale',
     gradientLighting: true,
     window: 1.0,
     level: 0.5,
     orientationCube: { size: 100, position: 'bottom-right' },
+    jitterEnabled: true,
+    gradientBlendFactor: 0.3,
   };
 
   // Interaction
@@ -209,6 +213,18 @@ export class VolumeRenderViewImpl {
         gradientLighting: enabled,
       },
     });
+    this.scheduleRender();
+  }
+
+  setJitterEnabled(enabled: boolean): void {
+    this.config.jitterEnabled = enabled;
+    this.renderer.setConfig({ jitterEnabled: enabled });
+    this.scheduleRender();
+  }
+
+  setGradientBlendFactor(factor: number): void {
+    this.config.gradientBlendFactor = Math.max(0, Math.min(1, factor));
+    this.renderer.setConfig({ gradientBlendFactor: this.config.gradientBlendFactor });
     this.scheduleRender();
   }
 

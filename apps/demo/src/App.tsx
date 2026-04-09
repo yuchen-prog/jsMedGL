@@ -1407,7 +1407,7 @@ export default function App() {
     autoLoadRan.current = true;
 
     setIsLoading(true);
-    fetch('/fixtures/img-3d.nii.gz')
+    fetch('/fixtures/corocta_vessel_mask.nii.gz')
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         return res.arrayBuffer();

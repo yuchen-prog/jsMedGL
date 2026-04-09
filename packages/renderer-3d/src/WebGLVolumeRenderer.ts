@@ -53,10 +53,18 @@ uniform int u_compositingMode;
 uniform float u_stepSize;
 uniform bool u_gradientLighting;
 uniform vec3 u_lightDir;
+uniform bool u_jitterEnabled;
+uniform float u_gradientBlendFactor;
 out vec4 fragColor;
 
 const vec3 BOX_MIN = vec3(0.0);
 const vec3 BOX_MAX = vec3(1.0);
+
+// Pseudo-random jitter for wood-grain anti-aliasing
+// Based on fragment coordinates; stable across frames
+float computeJitter(vec2 fragCoord) {
+  return fract(sin(dot(fragCoord, vec2(12.9898, 78.233))) * 43758.5453);
+}
 
 vec2 intersectBox(vec3 ro, vec3 rd) {
   vec3 invDir = 1.0 / rd;
@@ -80,6 +88,12 @@ vec3 computeGradient(vec3 pos) {
   return vec3(r - l, u - d, f - b);
 }
 
+// Smoothed gradient: exponential moving average across ray samples
+// blendFactor: 0=completely flat, 1=no smoothing. Default 0.3 gives good results.
+vec3 computeGradientSmooth(vec3 pos, vec3 prevSmooth, float blendFactor) {
+  return mix(prevSmooth, computeGradient(pos), blendFactor);
+}
+
 vec3 applyLighting(vec3 color, vec3 gradient) {
   vec3 normal = -normalize(gradient);
   float diff = max(dot(normal, normalize(u_lightDir)), 0.0);
@@ -101,6 +115,12 @@ void main() {
 
   tNear = max(tNear, 0.0);
 
+  // Jittered sampling: offset start position along ray to break up aliasing patterns
+  if (u_jitterEnabled) {
+    float jitter = computeJitter(gl_FragCoord.xy);
+    tNear += jitter * u_stepSize;
+  }
+
   vec3 entryPoint = rayOrigin + rayDir * tNear;
   vec3 exitPoint = rayOrigin + rayDir * tFar;
   float rayLength = distance(entryPoint, exitPoint);
@@ -120,6 +140,7 @@ void main() {
   float sumIntensity = 0.0;
   int actualSteps = 0;
   bool enableLighting = u_gradientLighting && u_compositingMode == 0;
+  vec3 prevSmoothGradient = vec3(0.0);
 
   for (int i = 0; i < 512; i++) {
     if (float(i) >= numSteps) break;
@@ -138,7 +159,8 @@ void main() {
       float opacity = texture(u_opacityLUT, vec2(windowed, 0.5)).r;
 
       if (enableLighting && opacity > 0.01) {
-        vec3 gradient = computeGradient(currentPos);
+        vec3 gradient = computeGradientSmooth(currentPos, prevSmoothGradient, u_gradientBlendFactor);
+        prevSmoothGradient = gradient;
         if (length(gradient) > 0.001) {
           color = applyLighting(color, gradient);
         }
@@ -232,6 +254,12 @@ export class WebGLVolumeRenderer {
     if (config.lightDirection !== undefined) {
       this.config.lightDirection = config.lightDirection;
     }
+    if (config.jitterEnabled !== undefined) {
+      this.config.jitterEnabled = config.jitterEnabled;
+    }
+    if (config.gradientBlendFactor !== undefined) {
+      this.config.gradientBlendFactor = config.gradientBlendFactor;
+    }
   }
 
   setCamera(state: Partial<VolumeCameraState>): void {
@@ -304,6 +332,8 @@ export class WebGLVolumeRenderer {
       this.config.lightDirection[1],
       this.config.lightDirection[2]
     );
+    gl.uniform1i(this.uniforms.u_jitterEnabled, this.config.jitterEnabled ? 1 : 0);
+    gl.uniform1f(this.uniforms.u_gradientBlendFactor, this.config.gradientBlendFactor);
 
     // Draw full-screen quad
     gl.bindVertexArray(this.vao);
@@ -375,7 +405,7 @@ export class WebGLVolumeRenderer {
       'u_volumeTexture', 'u_colorLUT', 'u_opacityLUT',
       'u_inverseViewMatrix', 'u_cameraPosition', 'u_aspect',
       'u_window', 'u_level', 'u_compositingMode', 'u_stepSize',
-      'u_gradientLighting', 'u_lightDir',
+      'u_gradientLighting', 'u_lightDir', 'u_jitterEnabled', 'u_gradientBlendFactor',
     ];
     for (const name of names) {
       this.uniforms[name] = gl.getUniformLocation(this.program, name);
