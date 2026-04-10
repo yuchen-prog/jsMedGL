@@ -100,6 +100,12 @@ export class VolumeRenderViewImpl {
   private currentFps = 0;
   private statsFps = 0;
 
+  // Adaptive LOD
+  private renderScale = 1.0;
+  private interactionState: 'still' | 'interacting' | 'fast' = 'still';
+  private lowFpsFrames = 0;
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Resize observer
   private resizeObserver: ResizeObserver | null = null;
 
@@ -285,6 +291,46 @@ export class VolumeRenderViewImpl {
     this.scheduleRender();
   }
 
+  // ── Adaptive LOD ─────────────────────────────────────────────────────────────
+
+  private setLODState(state: 'still' | 'interacting' | 'fast'): void {
+    if (state === this.interactionState) return;
+    this.interactionState = state;
+    this.lowFpsFrames = 0;
+
+    switch (state) {
+      case 'still':
+        this.renderScale = 1.0;
+        this.renderer.setConfig({ stepSize: 0.003 });
+        break;
+      case 'interacting':
+        this.renderScale = 0.5;
+        this.renderer.setConfig({ stepSize: 0.008 });
+        break;
+      case 'fast':
+        this.renderScale = 0.25;
+        this.renderer.setConfig({ stepSize: 0.015 });
+        break;
+    }
+
+    this.resize();
+    this.scheduleRender();
+  }
+
+  private scheduleProgressiveRecovery(): void {
+    // Step 1: restore resolution immediately (near-instant, no recompute cost)
+    this.renderScale = 1.0;
+    this.resize();
+    this.scheduleRender();
+
+    // Step 2: restore stepSize after 50ms
+    setTimeout(() => {
+      if (this.interactionState !== 'still') return;
+      this.renderer.setConfig({ stepSize: 0.003 });
+      this.scheduleRender();
+    }, 50);
+  }
+
   // ── DOM Setup ───────────────────────────────────────────────────────────────
 
   private setupDOM(): void {
@@ -328,8 +374,10 @@ export class VolumeRenderViewImpl {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
 
-    this.canvas.width = Math.round(w * dpr);
-    this.canvas.height = Math.round(h * dpr);
+    // Apply renderScale for adaptive LOD — canvas CSS size stays full-screen,
+    // but actual pixel count is scaled. GPU upscales to CSS size automatically.
+    this.canvas.width = Math.round(w * dpr * this.renderScale);
+    this.canvas.height = Math.round(h * dpr * this.renderScale);
 
     if (this.labelCanvas) {
       this.labelCanvas.width = Math.round(w * dpr);
@@ -375,6 +423,15 @@ export class VolumeRenderViewImpl {
       lastX: e.clientX,
       lastY: e.clientY,
     };
+    // Cancel any pending recovery
+    if (this.recoveryTimer !== null) {
+      clearTimeout(this.recoveryTimer);
+      this.recoveryTimer = null;
+    }
+    // Switch to interacting state immediately
+    if (this.interactionState === 'still') {
+      this.setLODState('interacting');
+    }
   };
 
   private handleMouseMove = (e: MouseEvent): void => {
@@ -417,10 +474,18 @@ export class VolumeRenderViewImpl {
 
   private handleMouseUp = (): void => {
     this.drag.active = false;
+    // Start progressive recovery after a brief pause
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = null;
+      this.scheduleProgressiveRecovery();
+    }, 200);
   };
 
   private handleWheel = (e: WheelEvent): void => {
     e.preventDefault();
+    if (this.interactionState === 'still') {
+      this.setLODState('interacting');
+    }
     const sensitivity = 0.001;
     this.renderer.getCameraObject().zoom(-e.deltaY * sensitivity);
     this.emitter.emit('cameraChange', { state: this.renderer.getCamera() } satisfies CameraEventData);
@@ -463,6 +528,17 @@ export class VolumeRenderViewImpl {
       this.statsFps = Math.round(this.currentFps);
       this.frameCount = 0;
       this.fpsAccumulator = 0;
+    }
+
+    // Auto-degrade to Fast if FPS drops too low during interaction
+    if (this.interactionState === 'interacting' && this.statsFps > 0 && this.statsFps < 25) {
+      this.lowFpsFrames++;
+      if (this.lowFpsFrames >= 3) {
+        this.setLODState('fast');
+      }
+    } else if (this.interactionState === 'fast' && this.statsFps >= 30) {
+      // Recover from Fast to Interacting if FPS is good
+      this.setLODState('interacting');
     }
 
     // Resize if needed

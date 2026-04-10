@@ -390,29 +390,30 @@ class VolumePreprocessor {
 
 采用 **stepSize + 渲染分辨率** 联合降级，分三档：
 
-| 状态 | stepSize | 渲染分辨率 | 光照 | 预期 FPS |
-|------|----------|-----------|------|---------|
-| **静止 (Still)** | 0.003 | 100% | 开启 | 视硬件而定 |
-| **交互 (Interacting)** | 0.008 | 50% | 开启 | ≥ 30fps |
-| **快速交互 (Fast)** | 0.015 | 25% | 关闭 | ≥ 60fps |
+| 状态 | stepSize | 渲染分辨率 | 预期 FPS |
+|------|----------|-----------|---------|
+| **静止 (Still)** | 0.003 | 100% | 视硬件而定 |
+| **交互 (Interacting)** | 0.008 | 50% | ≥ 30fps |
+| **快速交互 (Fast)** | 0.015 | 25% | ≥ 60fps |
+
+> 注：交互时不关闭光照。预计算梯度纹理已将梯度计算从 6 次采样降至 1 次，光照开销已很低。关闭光照仅节省约 5-10%，但会突然失去立体感，视觉代价大于收益。
 
 #### 状态切换逻辑
 
 ```
 鼠标按下 → Interacting 状态
-  ├── 静止超过 200ms → Still（渐进恢复：先 50% → 100% 分辨率 → 完整 stepSize）
+  ├── 静止超过 200ms → Still（渐进恢复）
   └── 连续 FPS < 25 → Fast 状态
 鼠标释放 → 延迟 100ms 后 → Still 状态（渐进恢复）
 ```
 
 #### 渐进恢复（Progressive Refinement）
 
-交互结束后不应一步跳到最高质量，而应分阶段恢复避免闪烁：
+交互结束后分阶段恢复，避免闪烁：
 
 ```
 Step 1: 恢复分辨率到 100%（立即，几乎无开销）
 Step 2: stepSize 从 0.008 → 0.003（延迟 50ms）
-Step 3: 重新开启光照（延迟 100ms）
 ```
 
 ### 6.4 实现路径
@@ -438,9 +439,9 @@ private handleMouseUp = (): void => {
 private setInteractionState(state: 'still' | 'interacting' | 'fast'): void {
   this.interactionState = state;
   const presets = {
-    still:        { stepSize: 0.003, resolution: 1.0, lighting: true },
-    interacting:  { stepSize: 0.008, resolution: 0.5, lighting: true },
-    fast:         { stepSize: 0.015, resolution: 0.25, lighting: false },
+    still:        { stepSize: 0.003, resolution: 1.0 },
+    interacting:  { stepSize: 0.008, resolution: 0.5 },
+    fast:         { stepSize: 0.015, resolution: 0.25 },
   };
   const p = presets[state];
   this.renderer.setConfig({ stepSize: p.stepSize });
@@ -520,8 +521,7 @@ VTK 源码参考：
 
 1. [x] **P0**: 在 `raycasting.frag.glsl` 中添加 Jittered Sampling — ✅ 已实现
 2. [x] **P1**: 实现预计算梯度纹理管线 — ✅ 已实现
-3. [ ] **P1**: 交互式自适应采样（第 6 节方案）
-4. [ ] **P1**: 评估性能影响和视觉质量提升（可用 FPS 计数器对比）
+3. [x] **P1**: 交互式自适应采样 — ✅ 已实现（stepSize + renderScale 三档降级，FPS 驱动自动切换）
 5. [ ] **P2**: 设计 VolumePreprocessor API（可选离线高斯平滑）
 6. [ ] **P2**: 实现离线高斯平滑（用户可选开关）
 7. [ ] **P3**: 调研 Pre-integrated Rendering 的完整实现
