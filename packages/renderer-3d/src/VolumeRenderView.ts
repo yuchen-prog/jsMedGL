@@ -71,7 +71,6 @@ export class VolumeRenderViewImpl {
     level: number;
     orientationCube: OrientationCubeConfig;
     jitterEnabled: boolean;
-    gradientBlendFactor: number;
   } = {
     colormap: 'grayscale',
     gradientLighting: true,
@@ -79,7 +78,6 @@ export class VolumeRenderViewImpl {
     level: 0.5,
     orientationCube: { size: 100, position: 'bottom-right' },
     jitterEnabled: true,
-    gradientBlendFactor: 0.3,
   };
 
   // Interaction
@@ -94,6 +92,13 @@ export class VolumeRenderViewImpl {
 
   // Events
   private emitter = new EventEmitter();
+
+  // FPS tracking
+  private lastFrameTime = 0;
+  private frameCount = 0;
+  private fpsAccumulator = 0;
+  private currentFps = 0;
+  private statsFps = 0;
 
   // Resize observer
   private resizeObserver: ResizeObserver | null = null;
@@ -222,12 +227,6 @@ export class VolumeRenderViewImpl {
     this.scheduleRender();
   }
 
-  setGradientBlendFactor(factor: number): void {
-    this.config.gradientBlendFactor = Math.max(0, Math.min(1, factor));
-    this.renderer.setConfig({ gradientBlendFactor: this.config.gradientBlendFactor });
-    this.scheduleRender();
-  }
-
   setCamera(state: Partial<VolumeCameraState>): void {
     this.renderer.setCamera(state);
     this.emitter.emit('cameraChange', { state: this.renderer.getCamera() } satisfies CameraEventData);
@@ -236,6 +235,13 @@ export class VolumeRenderViewImpl {
 
   getCamera(): VolumeCameraState {
     return this.renderer.getCamera();
+  }
+
+  /**
+   * Get current render statistics
+   */
+  getStats(): { fps: number } {
+    return { fps: this.statsFps };
   }
 
   on(event: VolumeRenderViewEvent, cb: EventCallback<unknown>): void {
@@ -446,6 +452,19 @@ export class VolumeRenderViewImpl {
     const gl = this.canvas.getContext('webgl2');
     if (!gl) return;
 
+    // FPS tracking
+    const now = performance.now();
+    const delta = now - this.lastFrameTime;
+    this.lastFrameTime = now;
+    this.frameCount++;
+    this.fpsAccumulator += delta;
+    if (this.fpsAccumulator >= 500) {
+      this.currentFps = (this.frameCount / this.fpsAccumulator) * 1000;
+      this.statsFps = Math.round(this.currentFps);
+      this.frameCount = 0;
+      this.fpsAccumulator = 0;
+    }
+
     // Resize if needed
     this.resize();
 
@@ -472,7 +491,44 @@ export class VolumeRenderViewImpl {
       );
     }
 
+    // Draw FPS overlay
+    this.drawFpsOverlay();
+
     this.emitter.emit('render', {});
+  }
+
+  private drawFpsOverlay(): void {
+    if (!this.labelCtx || !this.labelCanvas || this.statsFps === 0) return;
+
+    const ctx = this.labelCtx;
+
+    // FPS badge in top-left
+    const text = `${this.statsFps} FPS`;
+    ctx.save();
+    ctx.font = `bold 14px "SF Mono", "Fira Code", monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+
+    const padding = 10;
+    const metrics = ctx.measureText(text);
+    const bw = metrics.width + 16;
+    const bh = 24;
+
+    // Background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.beginPath();
+    ctx.roundRect(padding, padding, bw, bh, 4);
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Text
+    ctx.fillStyle = this.statsFps >= 55 ? '#4ade80' : this.statsFps >= 30 ? '#fbbf24' : '#f87171';
+    ctx.fillText(text, padding + 8, padding + 5);
+    ctx.restore();
   }
 }
 

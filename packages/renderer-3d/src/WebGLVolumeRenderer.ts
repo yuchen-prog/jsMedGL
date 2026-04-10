@@ -43,6 +43,7 @@ precision highp sampler3D;
 precision highp sampler2D;
 
 uniform sampler3D u_volumeTexture;
+uniform sampler3D u_gradientTexture;
 uniform sampler2D u_colorLUT;
 uniform sampler2D u_opacityLUT;
 in vec3 v_rayOrigin;
@@ -54,7 +55,7 @@ uniform float u_stepSize;
 uniform bool u_gradientLighting;
 uniform vec3 u_lightDir;
 uniform bool u_jitterEnabled;
-uniform float u_gradientBlendFactor;
+uniform int u_gradientPrecomputed;
 out vec4 fragColor;
 
 const vec3 BOX_MIN = vec3(0.0);
@@ -77,7 +78,8 @@ vec2 intersectBox(vec3 ro, vec3 rd) {
   return vec2(tN, tF);
 }
 
-vec3 computeGradient(vec3 pos) {
+// Central-difference gradient (fallback when precomputed texture unavailable)
+vec3 computeGradientCentral(vec3 pos) {
   float s = 0.002;
   float l = texture(u_volumeTexture, pos - vec3(s, 0.0, 0.0)).r;
   float r = texture(u_volumeTexture, pos + vec3(s, 0.0, 0.0)).r;
@@ -88,8 +90,24 @@ vec3 computeGradient(vec3 pos) {
   return vec3(r - l, u - d, f - b);
 }
 
-// Smoothed gradient: exponential moving average across ray samples
-// blendFactor: 0=completely flat, 1=no smoothing. Default 0.3 gives good results.
+// Decode precomputed gradient from RGBA8 texture.
+// CPU encodes: R/G/B = (normalized_dir + 1) * 127.5 (Uint8), A = magnitude
+// GPU reads UNSIGNED_BYTE as [0,1], so decode: dir = val / 0.5 - 1.0
+vec3 sampleGradient(vec3 pos) {
+  vec4 encoded = texture(u_gradientTexture, pos);
+  vec3 dir = encoded.rgb / 0.5 - 1.0;
+  return dir;
+}
+
+// Sample gradient, using precomputed texture if available
+vec3 computeGradient(vec3 pos) {
+  if (u_gradientPrecomputed == 1) {
+    return sampleGradient(pos);
+  }
+  return computeGradientCentral(pos);
+}
+
+// Exponential moving average smoothing across ray samples
 vec3 computeGradientSmooth(vec3 pos, vec3 prevSmooth, float blendFactor) {
   return mix(prevSmooth, computeGradient(pos), blendFactor);
 }
@@ -159,8 +177,18 @@ void main() {
       float opacity = texture(u_opacityLUT, vec2(windowed, 0.5)).r;
 
       if (enableLighting && opacity > 0.01) {
-        vec3 gradient = computeGradientSmooth(currentPos, prevSmoothGradient, u_gradientBlendFactor);
-        prevSmoothGradient = gradient;
+        vec3 gradient;
+        if (u_gradientPrecomputed == 1) {
+          // Precomputed gradient: trilinear filtering already smooths spatially.
+          // Return normalized direction for correct lighting.
+          gradient = computeGradient(currentPos);
+          // DEBUG: uncomment to visualize gradient direction
+          // fragColor = vec4(gradient * 0.5 + 0.5, 1.0); return;
+        } else {
+          // Fallback: central diff with EMA smoothing across ray samples.
+          gradient = computeGradientSmooth(currentPos, prevSmoothGradient, 0.3);
+          prevSmoothGradient = gradient;
+        }
         if (length(gradient) > 0.001) {
           color = applyLighting(color, gradient);
         }
@@ -257,9 +285,6 @@ export class WebGLVolumeRenderer {
     if (config.jitterEnabled !== undefined) {
       this.config.jitterEnabled = config.jitterEnabled;
     }
-    if (config.gradientBlendFactor !== undefined) {
-      this.config.gradientBlendFactor = config.gradientBlendFactor;
-    }
   }
 
   setCamera(state: Partial<VolumeCameraState>): void {
@@ -333,7 +358,13 @@ export class WebGLVolumeRenderer {
       this.config.lightDirection[2]
     );
     gl.uniform1i(this.uniforms.u_jitterEnabled, this.config.jitterEnabled ? 1 : 0);
-    gl.uniform1f(this.uniforms.u_gradientBlendFactor, this.config.gradientBlendFactor);
+
+    // Bind gradient texture (unit 3) and flag
+    const gradTex = this.textureManager.getGradientTexture();
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_3D, gradTex);
+    gl.uniform1i(this.uniforms.u_gradientTexture, 3);
+    gl.uniform1i(this.uniforms.u_gradientPrecomputed, gradTex ? 1 : 0);
 
     // Draw full-screen quad
     gl.bindVertexArray(this.vao);
@@ -402,10 +433,10 @@ export class WebGLVolumeRenderer {
 
     // Cache uniform locations
     const names = [
-      'u_volumeTexture', 'u_colorLUT', 'u_opacityLUT',
+      'u_volumeTexture', 'u_gradientTexture', 'u_colorLUT', 'u_opacityLUT',
       'u_inverseViewMatrix', 'u_cameraPosition', 'u_aspect',
       'u_window', 'u_level', 'u_compositingMode', 'u_stepSize',
-      'u_gradientLighting', 'u_lightDir', 'u_jitterEnabled', 'u_gradientBlendFactor',
+      'u_gradientLighting', 'u_lightDir', 'u_jitterEnabled', 'u_gradientPrecomputed',
     ];
     for (const name of names) {
       this.uniforms[name] = gl.getUniformLocation(this.program, name);

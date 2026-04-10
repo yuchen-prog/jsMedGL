@@ -80,8 +80,6 @@ export interface RaycastingConfig {
   lightDirection: [number, number, number];
   /** Enable jittered sampling to eliminate wood-grain aliasing (default: true) */
   jitterEnabled: boolean;
-  /** Gradient smoothing: exponential moving average blend factor, 0-1 (default: 0.3) */
-  gradientBlendFactor: number;
 }
 
 /**
@@ -99,7 +97,6 @@ export const DEFAULT_RAYCASTING_CONFIG: RaycastingConfig = {
   },
   lightDirection: [0.577, 0.577, 0.577], // normalize([1,1,1])
   jitterEnabled: true,
-  gradientBlendFactor: 0.3,
 };
 
 /**
@@ -151,8 +148,6 @@ export interface VolumeRenderView {
   setGradientLighting(enabled: boolean): void;
   /** Enable/disable jittered sampling (default: true) */
   setJitterEnabled(enabled: boolean): void;
-  /** Set gradient smoothing blend factor: 0=max smoothing, 1=no smoothing (default: 0.3) */
-  setGradientBlendFactor(factor: number): void;
   /** Apply a tissue preset (sets colormap + window/level) */
   applyPreset(preset: TissuePreset): void;
   /** Set camera state (partial) */
@@ -165,6 +160,8 @@ export interface VolumeRenderView {
   off(event: 'render' | 'cameraChange' | 'windowLevelChange', cb: (data: unknown) => void): void;
   /** Trigger a render frame manually */
   render(): void;
+  /** Get current render statistics */
+  getStats(): { fps: number };
   /** Release all resources and remove canvas */
   dispose(): void;
 }

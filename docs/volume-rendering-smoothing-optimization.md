@@ -359,12 +359,179 @@ class VolumePreprocessor {
 
 ---
 
-## 6. 下一步行动
+## 6. 交互式自适应采样（Adaptive LOD）
 
-1. [ ] **P0**: 在 `raycasting.frag.glsl` 中添加 Jittered Sampling
-2. [ ] **P0**: 测试不同 CT/MRI 数据集的改善效果
-3. [ ] **P1**: 实现预计算梯度纹理管线
-4. [ ] **P1**: 评估性能影响和视觉质量提升
-5. [ ] **P2**: 设计 VolumePreprocessor API
+> 目标：旋转/拖拽时保持 60fps 流畅交互，静止时恢复最高渲染质量
+> 参考：VTK `AutoAdjustSampleDistances`、3D Slicer 交互降级策略
+
+### 6.1 问题分析
+
+体绘制 ray marching 的性能瓶颈在于**每帧每像素的 ray 采样次数**：
+
+```
+每帧工作量 ≈ 屏幕像素数 × (rayLength / stepSize)
+```
+
+当前配置 `stepSize = 0.003`，典型 ray 长度 `≈ 1.0`，约 **333 次采样/像素**。
+对于 800×600 视口，一帧需要约 1.6 亿次纹理采样。旋转时需要持��� 60fps，
+每帧预算仅 16.7ms，压力很大。
+
+### 6.2 优化手段对比
+
+| 手段 | 实现复杂度 | 性能提升 | 视觉影响 | 适用场景 |
+|------|-----------|---------|---------|---------|
+| **增大 stepSize** | 低（1 个 uniform） | ~3-5× | 细节模糊，木纹伪影加重 | 旋转时快速降级 |
+| **降低渲染分辨率** | 低（改 viewport） | ~4×（半分辨率） | 整体模糊，但结构清晰 | 高 DPI 设备首选 |
+| **关闭光照** | 低（1 个 bool） | ~30%（省掉梯度采样） | 失去立体感 | 不推荐单独使用 |
+| **减少 maxSteps** | 低（1 个 uniform） | 低（远距离处） | 远处半透明物体消失 | 远景多时有效 |
+| **Early ray termination 阈值** | 已实现 | ~20% | 无 | 始终开启 |
+
+### 6.3 推荐方案：双参数自适应降级
+
+采用 **stepSize + 渲染分辨率** 联合降级，分三档：
+
+| 状态 | stepSize | 渲染分辨率 | 光照 | 预期 FPS |
+|------|----------|-----------|------|---------|
+| **静止 (Still)** | 0.003 | 100% | 开启 | 视硬件而定 |
+| **交互 (Interacting)** | 0.008 | 50% | 开启 | ≥ 30fps |
+| **快速交互 (Fast)** | 0.015 | 25% | 关闭 | ≥ 60fps |
+
+#### 状态切换逻辑
+
+```
+鼠标按下 → Interacting 状态
+  ├── 静止超过 200ms → Still（渐进恢复：先 50% → 100% 分辨率 → 完整 stepSize）
+  └── 连续 FPS < 25 → Fast 状态
+鼠标释放 → 延迟 100ms 后 → Still 状态（渐进恢复）
+```
+
+#### 渐进恢复（Progressive Refinement）
+
+交互结束后不应一步跳到最高质量，而应分阶段恢复避免闪烁：
+
+```
+Step 1: 恢复分辨率到 100%（立即，几乎无开销）
+Step 2: stepSize 从 0.008 → 0.003（延迟 50ms）
+Step 3: 重新开启光照（延迟 100ms）
+```
+
+### 6.4 实现路径
+
+#### 6.4.1 stepSize 动态调整
+
+已有 `u_stepSize` uniform，只需在 `VolumeRenderView` 中根据交互状态动态设置：
+
+```typescript
+// VolumeRenderView.ts
+private interactionState: 'still' | 'interacting' | 'fast' = 'still';
+
+private handleMouseDown = (e: MouseEvent): void => {
+  // ...
+  this.setInteractionState('interacting');
+};
+
+private handleMouseUp = (): void => {
+  this.drag.active = false;
+  this.scheduleProgressiveRefinement();
+};
+
+private setInteractionState(state: 'still' | 'interacting' | 'fast'): void {
+  this.interactionState = state;
+  const presets = {
+    still:        { stepSize: 0.003, resolution: 1.0, lighting: true },
+    interacting:  { stepSize: 0.008, resolution: 0.5, lighting: true },
+    fast:         { stepSize: 0.015, resolution: 0.25, lighting: false },
+  };
+  const p = presets[state];
+  this.renderer.setConfig({ stepSize: p.stepSize });
+  this.renderScale = p.resolution;
+  // lighting 控制...
+}
+```
+
+#### 6.4.2 渲染分辨率缩放
+
+通过 `gl.viewport()` + canvas 尺寸控制，不需要改 shader：
+
+```typescript
+// resize() 中根据 renderScale 缩放
+private renderScale = 1.0;
+
+private resize(): void {
+  const dpr = window.devicePixelRatio || 1;
+  const w = this.container.clientWidth;
+  const h = this.container.clientHeight;
+
+  // canvas CSS 尺寸保持不变
+  this.canvas.style.width = w + 'px';
+  this.canvas.style.height = h + 'px';
+
+  // 实际像素数按 renderScale 缩放
+  this.canvas.width = Math.round(w * dpr * this.renderScale);
+  this.canvas.height = Math.round(h * dpr * this.renderScale);
+
+  // GPU 会自动双线性放大到 CSS 尺寸，交互时模糊但不卡顿
+}
+```
+
+#### 6.4.3 自动 FPS 驱动降级
+
+利用已有的 FPS 计数器，当连续 N 帧 FPS 过低时自动降级：
+
+```typescript
+private doRender(): void {
+  // ... existing render logic ...
+
+  // Auto-degrade if FPS is too low during interaction
+  if (this.interactionState === 'interacting' && this.statsFps > 0 && this.statsFps < 25) {
+    this.setInteractionState('fast');
+  }
+}
+```
+
+### 6.5 VTK 参考实现
+
+VTK 的 `vtkGPUVolumeRayCastMapper` 使用 `AutoAdjustSampleDistances` 策略：
+
+1. 每帧测量渲染时间
+2. 如果超过目标帧时间（默认 1/30s），增大 `ImageSampleDistance`（相当于降低分辨率）
+3. 同时增大 `SampleDistance`（增大步长）
+4. 交互结束后逐步恢复原始参数
+
+VTK 源码参考：
+- `Rendering/Volume/vtkGPUVolumeRayCastMapper.cxx` — `ComputeRayCastSize()`
+- 核心逻辑：`newSampleDistance = oldSampleDistance * (renderTime / targetTime) ^ 0.5`
+
+### 6.6 性能预期
+
+以 256³ 体积 + 800×600 视口为例：
+
+| 状态 | stepSize | 分辨率 | 每像素采样数 | 总采样/帧 | 预期帧时间 |
+|------|----------|-------|-------------|----------|-----------|
+| Still | 0.003 | 800×600 | ~333 | 1.6 亿 | ~30-50ms |
+| Interacting | 0.008 | 400×300 | ~125 | 1500 万 | ~5-8ms |
+| Fast | 0.015 | 200×150 | ~67 | 200 万 | ~1-2ms |
+
+交互档位下预计可达 **100+ fps**，Fast 档位下 **200+ fps**。
+
+---
+
+## 7. 下一步行动
+
+1. [x] **P0**: 在 `raycasting.frag.glsl` 中添加 Jittered Sampling — ✅ 已实现
+2. [x] **P1**: 实现预计算梯度纹理管线 — ✅ 已实现
+3. [ ] **P1**: 交互式自适应采样（第 6 节方案）
+4. [ ] **P1**: 评估性能影响和视觉质量提升（可用 FPS 计数器对比）
+5. [ ] **P2**: 设计 VolumePreprocessor API（可选离线高斯平滑）
 6. [ ] **P2**: 实现离线高斯平滑（用户可选开关）
 7. [ ] **P3**: 调研 Pre-integrated Rendering 的完整实现
+
+### 7.1 已实现功能（v0.2）
+
+| 功能 | 文件 | 说明 |
+|------|------|------|
+| FPS 计数器 | `VolumeRenderView.ts` | 左上角实时显示，500ms 采样间隔，颜色编码（绿/黄/红） |
+| Jittered Sampling | `WebGLVolumeRenderer.ts` | `u_jitterEnabled` 控制，`computeJitter()` 基于片段坐标的稳定伪随机偏移 |
+| 预计算梯度纹理 | `VolumeTextureManager.ts` | CPU 端 central difference，RGBA8 编码（法线方向 + 幅度），上传为 3D 纹理 |
+| Shader 梯度查找 | `WebGLVolumeRenderer.ts` | `sampleGradient()` 解码 + trilinear 插值，EMA 平滑 (blendFactor=0.3) |
+| FPS 公共 API | `VolumeRenderView.ts` | `getStats(): { fps: number }` 供外部轮询 |
