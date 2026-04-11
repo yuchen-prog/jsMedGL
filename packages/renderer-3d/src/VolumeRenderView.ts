@@ -488,10 +488,21 @@ export class VolumeRenderViewImpl {
     if (this.interactionState === 'still') {
       this.setLODState('interacting');
     }
+    // Reset recovery timer on each wheel event
+    if (this.recoveryTimer !== null) {
+      clearTimeout(this.recoveryTimer);
+      this.recoveryTimer = null;
+    }
     const sensitivity = 0.001;
     this.renderer.getCameraObject().zoom(-e.deltaY * sensitivity);
     this.emitter.emit('cameraChange', { state: this.renderer.getCamera() } satisfies CameraEventData);
     this.scheduleRender();
+    // Start progressive recovery after wheel stops for 200ms
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = null;
+      this.interactionState = 'still';
+      this.scheduleProgressiveRecovery();
+    }, 200);
   };
 
   private handleDblClick = (): void => {
