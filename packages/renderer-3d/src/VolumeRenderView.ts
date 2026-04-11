@@ -474,6 +474,8 @@ export class VolumeRenderViewImpl {
 
   private handleMouseUp = (): void => {
     this.drag.active = false;
+    // Switch to still state so the next interaction re-triggers setLODState
+    this.interactionState = 'still';
     // Start progressive recovery after a brief pause
     this.recoveryTimer = setTimeout(() => {
       this.recoveryTimer = null;
