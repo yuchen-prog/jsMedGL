@@ -30,8 +30,9 @@
   "author": "jsMedgl Team",
   "license": "Apache-2.0",
   "dependencies": {
+    "@jsmedgl/core": "workspace:*",
     "@jsmedgl/parser-nifti": "workspace:*",
-    "@jsmedgl/parser-nifti": "workspace:*"
+    "gl-matrix": "^3.4.3"
   },
   "devDependencies": {
     "typescript": "^5.3.0"

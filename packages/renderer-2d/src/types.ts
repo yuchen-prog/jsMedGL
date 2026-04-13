@@ -1,5 +1,7 @@
 // Type definitions for 2D slice renderer
 
+import type { WindowLevel as CoreWindowLevel } from '@jsmedgl/core';
+
 /**
  * Slice orientation
  */
@@ -43,12 +45,9 @@ export interface TextureManagerOptions {
 export type TextureFormat = 'luminance' | 'rgb' | 'rgba';
 
 /**
- * Window/Level settings
+ * Window/Level settings (re-exported from core)
  */
-export interface WindowLevel {
-  window: number;  // Window width (display range)
-  level: number;   // Window level (center value)
-}
+export type WindowLevel = CoreWindowLevel;
 
 /**
  * Crosshair position in volume coordinates

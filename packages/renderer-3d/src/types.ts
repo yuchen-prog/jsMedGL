@@ -1,6 +1,8 @@
 // Type definitions for 3D volume renderer
 
 import type { NiftiVolume } from '@jsmedgl/parser-nifti';
+import type { ColormapName } from '@jsmedgl/core';
+export type { ColormapName };
 
 // ============================================
 // Rendering Modes
@@ -18,21 +20,6 @@ export type CompositingMode =
 // ============================================
 // Transfer Function / Colormap
 // ============================================
-
-/**
- * Colormap names for volume rendering
- */
-export type ColormapName =
-  | 'grayscale'
-  | 'hot'
-  | 'bone'
-  | 'iron'
-  | 'viridis'
-  | 'airways'
-  | 'angiography'
-  | 'pet'
-  | 'soft_tissue'
-  | 'lung';
 
 /**
  * Transfer function configuration
