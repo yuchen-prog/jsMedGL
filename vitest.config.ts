@@ -25,6 +25,7 @@ export default defineConfig({
       '@jsmedgl/react': resolve(__dirname, 'packages/react/src'),
       '@jsmedgl/renderer-2d': resolve(__dirname, 'packages/renderer-2d/src'),
       '@jsmedgl/renderer-3d': resolve(__dirname, 'packages/renderer-3d/src'),
+      '@jsmedgl/parser-dicom': resolve(__dirname, 'packages/parser-dicom/src'),
     },
   },
 });

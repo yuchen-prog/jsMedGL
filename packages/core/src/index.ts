@@ -70,3 +70,4 @@ export type { EventEmitter, EventCallback } from './events';
 
 // ─── Unified type re-exports ───
 export type * from './types';
+export type { Volume } from './types';

@@ -41,9 +41,17 @@ export class ObliquePlane {
     this.volume = options.volume;
     this.baseOrientation = options.baseOrientation;
 
-    // 提取 affine 矩阵
-    this.affine = extractAffineMatrix(options.volume.header);
-    this.inverseAffine = invertMatrix(this.affine);
+    // Prefer the volume's pre-computed affine (DICOM already provides it).
+    // Fall back to extracting from header for NIfTI volumes without one.
+    if (options.volume.affine && options.volume.affine.length === 16) {
+      this.affine = [...options.volume.affine];
+      this.inverseAffine = options.volume.inverseAffine && options.volume.inverseAffine.length === 16
+        ? [...options.volume.inverseAffine]
+        : invertMatrix(this.affine);
+    } else {
+      this.affine = extractAffineMatrix(options.volume.header);
+      this.inverseAffine = invertMatrix(this.affine);
+    }
 
     // 初始化焦点为体积中心（RAS）
     const centerIjk: [number, number, number] = [
