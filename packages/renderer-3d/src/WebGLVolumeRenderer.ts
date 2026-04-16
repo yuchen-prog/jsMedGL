@@ -56,10 +56,10 @@ uniform bool u_gradientLighting;
 uniform vec3 u_lightDir;
 uniform bool u_jitterEnabled;
 uniform int u_gradientPrecomputed;
+uniform vec3 u_volumeAspect;
 out vec4 fragColor;
 
 const vec3 BOX_MIN = vec3(0.0);
-const vec3 BOX_MAX = vec3(1.0);
 
 // Pseudo-random jitter for wood-grain anti-aliasing
 // Based on fragment coordinates; stable across frames
@@ -68,9 +68,10 @@ float computeJitter(vec2 fragCoord) {
 }
 
 vec2 intersectBox(vec3 ro, vec3 rd) {
+  vec3 boxMax = u_volumeAspect;
   vec3 invDir = 1.0 / rd;
   vec3 t0 = (BOX_MIN - ro) * invDir;
-  vec3 t1 = (BOX_MAX - ro) * invDir;
+  vec3 t1 = (boxMax - ro) * invDir;
   vec3 tNear = min(t0, t1);
   vec3 tFar = max(t0, t1);
   float tN = max(max(tNear.x, tNear.y), tNear.z);
@@ -122,6 +123,10 @@ void main() {
   vec3 rayDir = normalize(v_rayDir);
   vec3 rayOrigin = v_rayOrigin;
 
+  // Ray-AABB intersection in physical (aspect-corrected) space.
+  // u_volumeAspect defines the bounding box extents so that the box has
+  // the correct physical proportions (e.g. [0.34, 0.34, 1.0] for
+  // anisotropic DICOM data with thin slices).
   vec2 hit = intersectBox(rayOrigin, rayDir);
   float tNear = hit.x;
   float tFar = hit.y;
@@ -152,6 +157,9 @@ void main() {
   vec3 step = rayDir * u_stepSize;
   vec3 currentPos = entryPoint;
 
+  // Convert physical-space position to texture UV [0,1]^3 for sampling.
+  vec3 invAspect = 1.0 / u_volumeAspect;
+
   vec4 accumulated = vec4(0.0);
   float maxIntensity = 0.0;
   float minIntensity = 1.0;
@@ -163,7 +171,9 @@ void main() {
   for (int i = 0; i < 512; i++) {
     if (float(i) >= numSteps) break;
 
-    float intensity = texture(u_volumeTexture, currentPos).r;
+    // Map physical-space position to texture UV [0,1]^3
+    vec3 texCoord = currentPos * invAspect;
+    float intensity = texture(u_volumeTexture, texCoord).r;
     float windowed = (intensity - u_level) / u_window + 0.5;
     windowed = clamp(windowed, 0.0, 1.0);
 
@@ -179,14 +189,9 @@ void main() {
       if (enableLighting && opacity > 0.01) {
         vec3 gradient;
         if (u_gradientPrecomputed == 1) {
-          // Precomputed gradient: trilinear filtering already smooths spatially.
-          // Return normalized direction for correct lighting.
-          gradient = computeGradient(currentPos);
-          // DEBUG: uncomment to visualize gradient direction
-          // fragColor = vec4(gradient * 0.5 + 0.5, 1.0); return;
+          gradient = computeGradient(texCoord);
         } else {
-          // Fallback: central diff with EMA smoothing across ray samples.
-          gradient = computeGradientSmooth(currentPos, prevSmoothGradient, 0.3);
+          gradient = computeGradientSmooth(texCoord, prevSmoothGradient, 0.3);
           prevSmoothGradient = gradient;
         }
         if (length(gradient) > 0.001) {
@@ -333,12 +338,39 @@ export class WebGLVolumeRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.transferFunction.getOpacityTexture());
     gl.uniform1i(this.uniforms.u_opacityLUT, 2);
 
-    // Camera uniforms
+    // Volume aspect ratio: normalize physical dims so longest axis = 1.0
+    // This stretches the bounding box to match physical proportions.
+    const physDims = this.textureManager.physicalDimensions;
+    const maxPhys = Math.max(physDims[0], physDims[1], physDims[2], 1);
+    const aspectX = physDims[0] / maxPhys;
+    const aspectY = physDims[1] / maxPhys;
+    const aspectZ = physDims[2] / maxPhys;
+    gl.uniform3f(this.uniforms.u_volumeAspect, aspectX, aspectY, aspectZ);
+
+    // Camera uniforms — offset camera position and target from unit-cube
+    // center [0.5,0.5,0.5] to the bounding-box center [aspect*0.5].
+    const boxCenter: [number, number, number] = [
+      aspectX * 0.5,
+      aspectY * 0.5,
+      aspectZ * 0.5,
+    ];
+    const camState = this.camera.getState();
+    // Offset: camera target was [0.5,0.5,0.5] in unit space, shift to box center
+    const targetOffset: [number, number, number] = [
+      camState.target[0] - 0.5 + boxCenter[0],
+      camState.target[1] - 0.5 + boxCenter[1],
+      camState.target[2] - 0.5 + boxCenter[2],
+    ];
+    this.camera.setTarget(targetOffset);
+
     const invView = this.camera.getInverseViewMatrix();
     gl.uniformMatrix4fv(this.uniforms.u_inverseViewMatrix, false, invView);
 
     const camPos = this.camera.getPosition();
     gl.uniform3f(this.uniforms.u_cameraPosition, camPos[0], camPos[1], camPos[2]);
+
+    // Restore the original target so user orbit/pan still works in unit space
+    this.camera.setTarget(camState.target);
 
     // Aspect ratio from viewport (0x0BA2 = VIEWPORT)
     const viewport = gl.getParameter(0x0BA2) as Int32Array;
@@ -437,6 +469,7 @@ export class WebGLVolumeRenderer {
       'u_inverseViewMatrix', 'u_cameraPosition', 'u_aspect',
       'u_window', 'u_level', 'u_compositingMode', 'u_stepSize',
       'u_gradientLighting', 'u_lightDir', 'u_jitterEnabled', 'u_gradientPrecomputed',
+      'u_volumeAspect',
     ];
     for (const name of names) {
       this.uniforms[name] = gl.getUniformLocation(this.program, name);

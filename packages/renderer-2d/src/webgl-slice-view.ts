@@ -278,6 +278,7 @@ class WebGLSliceViewImpl implements WebGLSliceView {
     }
 
     const gl = this.gl;
+    const { dimensions, spacing } = this.volume;
 
     let sliceW: number, sliceH: number;
     let texture: WebGLTexture;
@@ -290,7 +291,6 @@ class WebGLSliceViewImpl implements WebGLSliceView {
       texture = this.uploadObliqueTexture(result.data, sliceW, sliceH);
     } else {
       // Orthogonal mode: use WebGL slice extractor
-      const { dimensions } = this.volume;
       switch (this.orientation) {
         case 'axial':
           sliceW = dimensions[0];
@@ -309,10 +309,36 @@ class WebGLSliceViewImpl implements WebGLSliceView {
       texture = slice.texture;
     }
 
-    // Calculate display area (centered, aspect ratio preserved)
-    const scale = Math.min(containerW / sliceW, containerH / sliceH);
-    const drawW = Math.floor(sliceW * scale);
-    const drawH = Math.floor(sliceH * scale);
+    // Calculate display area (centered, aspect ratio preserved).
+    // Use physical dimensions so that the rendered proportions match the
+    // real-world object geometry (e.g. anisotropic DICOM data with
+    // 0.5×0.5×2mm voxels won't look stretched).
+    let physW: number, physH: number;
+    if (this.obliquePlane && this.obliqueExtractor) {
+      // Oblique: result dimensions are already in physical units (mm)
+      physW = sliceW;
+      physH = sliceH;
+    } else {
+      // Orthogonal: compute physical size from voxel count × spacing
+      switch (this.orientation) {
+        case 'axial':
+          physW = dimensions[0] * spacing[0];
+          physH = dimensions[1] * spacing[1];
+          break;
+        case 'coronal':
+          physW = dimensions[0] * spacing[0];
+          physH = dimensions[2] * spacing[2];
+          break;
+        case 'sagittal':
+          physW = dimensions[1] * spacing[1];
+          physH = dimensions[2] * spacing[2];
+          break;
+      }
+    }
+
+    const scale = Math.min(containerW / physW, containerH / physH);
+    const drawW = Math.floor(physW * scale);
+    const drawH = Math.floor(physH * scale);
     const drawX = Math.floor((containerW - drawW) / 2);
     const drawY = Math.floor((containerH - drawH) / 2);
 
