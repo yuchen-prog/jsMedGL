@@ -1,6 +1,7 @@
-// jsMedgl Demo - NIfTI Viewer with WebGL Rendering and MPR Support
+// jsMedgl Demo - DICOM Viewer with WebGL Rendering and MPR Support
 import { memo, useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { parseNifti } from '@jsmedgl/parser-nifti';
+import type { DicomVolume } from '@jsmedgl/parser-dicom';
+import type { NiftiVolume } from '@jsmedgl/parser-nifti';
 import { createWebGLSliceView, type WebGLSliceView } from '@jsmedgl/renderer-2d';
 import { createVolumeRenderView, type VolumeRenderView } from '@jsmedgl/renderer-3d';
 import { DEFAULT_CAMERA_STATE, TISSUE_PRESETS } from '@jsmedgl/renderer-3d';
@@ -12,12 +13,25 @@ import {
   type ObliquePlane,
   type ObliqueExtractor as ObliqueExtractorType,
 } from '@jsmedgl/renderer-2d';
-import type { NiftiVolume } from '@jsmedgl/parser-nifti';
 import type { SliceOrientation, CrosshairPosition } from '@jsmedgl/renderer-2d';
 import type { Line3D } from '@jsmedgl/renderer-2d';
+import { loadDicomFolder } from './dicom-loader';
 import './styles.css';
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+// DicomVolume and NiftiVolume are structurally compatible — renderer functions
+// accept either via TypeScript structural typing.
+type MedVolume = NiftiVolume | DicomVolume;
+
+/**
+ * Cast MedVolume to NiftiVolume for renderer APIs.
+ * DicomVolume has the same rendering-relevant fields (data, dimensions, spacing,
+ * affine, inverseAffine, header.datatype), so this is safe at runtime.
+ */
+function asNiftiVolume(volume: MedVolume): NiftiVolume {
+  return volume as unknown as NiftiVolume;
+}
 
 const DATATYPE_NAMES: Record<number, string> = {
   2: 'UINT8', 4: 'INT16', 8: 'INT32', 16: 'FLOAT32', 64: 'FLOAT64', 128: 'RGB24',
@@ -124,7 +138,7 @@ const OrientationLabels = memo(function OrientationLabels({ orientation }: { ori
 // ─── Slice Viewer ───────────────────────────────────────────────────────────
 
 interface SliceViewerProps {
-  volume: NiftiVolume;
+  volume: MedVolume;
   orientation: SliceOrientation;
   windowLevel: WindowLevelState;
   crosshair: CrosshairPosition;
@@ -176,7 +190,7 @@ const SliceViewer = memo(function SliceViewer({
     }
     initialSlice = Math.max(0, Math.min(initialSlice, maxSlice));
 
-    const view = createWebGLSliceView(volume, {
+    const view = createWebGLSliceView(asNiftiVolume(volume), {
       container: wrapper,
       orientation,
       initialWindowLevel: { window: windowLevel.window, level: windowLevel.level },
@@ -359,7 +373,7 @@ const SliceViewer = memo(function SliceViewer({
 // ─── Oblique Slice Viewer ────────────────────────────────────────────────────
 
 interface ObliqueSliceViewerProps {
-  volume: NiftiVolume;
+  volume: MedVolume;
   orientation: SliceOrientation;
   windowLevel: WindowLevelState;
   /** Shared extractor (with pre-normalized data) */
@@ -417,7 +431,7 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
     const wrapper = canvasWrapperRef.current;
     if (!wrapper) return;
 
-    const view = createWebGLSliceView(volume, {
+    const view = createWebGLSliceView(asNiftiVolume(volume), {
       container: wrapper,
       orientation,
       initialWindowLevel: { window: windowLevel.window, level: windowLevel.level },
@@ -693,7 +707,7 @@ const ObliqueSliceViewer = memo(function ObliqueSliceViewer({
 // ─── Oblique MPR Viewer ────────────────────────────────────────────────────
 
 interface ObliqueMPRViewerProps {
-  volume: NiftiVolume;
+  volume: MedVolume;
   windowLevel: WindowLevelState;
 }
 
@@ -747,7 +761,7 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
     container.style.display = 'none';
     document.body.appendChild(container);
 
-    const view = createWebGLSliceView(volume, {
+    const view = createWebGLSliceView(asNiftiVolume(volume), {
       container,
       orientation: 'axial',
       initialWindowLevel: { window: 255, level: 128 },
@@ -755,7 +769,7 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
     sharedViewRef.current = view;
 
     const normalizedData = view.getNormalizedData();
-    const ext = createObliqueExtractor({ volume, normalizedData });
+    const ext = createObliqueExtractor({ volume: asNiftiVolume(volume), normalizedData });
     setExtractor(ext);
 
     return () => {
@@ -889,7 +903,7 @@ function ObliqueMPRViewer({ volume, windowLevel }: ObliqueMPRViewerProps) {
 // ─── MPR Viewer ──────────────────────────────────────────────────────────────
 
 interface MPRViewerProps {
-  volume: NiftiVolume;
+  volume: MedVolume;
   crosshair: CrosshairPosition;
   windowLevel: WindowLevelState;
   onCrosshairChange: (ijk: CrosshairPosition) => void;
@@ -948,7 +962,7 @@ function MPRViewer({ volume, crosshair, windowLevel, onCrosshairChange }: MPRVie
 // ─── Single Viewer ───────────────────────────────────────────────────────────
 
 interface SingleViewerProps {
-  volume: NiftiVolume;
+  volume: MedVolume;
   crosshair: CrosshairPosition;
   windowLevel: WindowLevelState;
   onCrosshairChange: (ijk: CrosshairPosition) => void;
@@ -1004,7 +1018,7 @@ function normalizeWL(w: number, l: number): { window: number; level: number } {
 }
 
 interface VolumeViewerProps {
-  volume: NiftiVolume;
+  volume: MedVolume;
   windowLevel: WindowLevelState;
   compositingMode: CompositingMode;
   colormap: ColormapName;
@@ -1026,7 +1040,7 @@ function VolumeViewer({ volume, windowLevel, compositingMode, colormap, gradient
       orientationCube: { size: 80, position: 'bottom-right' },
     });
     viewRef.current = view;
-    view.setVolume(volume);
+    view.setVolume(asNiftiVolume(volume));
 
     return () => {
       view.dispose();
@@ -1224,25 +1238,28 @@ function Header({ viewMode, mprEnabled, crosshair, onViewModeChange }: {
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
-function FileSection({ error, onFileSelect }: { error: string | null; onFileSelect: (file: File) => void }) {
+function FileSection({ error, onFolderSelect }: { error: string | null; onFolderSelect: (files: File[]) => void }) {
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) onFileSelect(file);
-  }, [onFileSelect]);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      onFolderSelect(Array.from(files));
+    }
+  }, [onFolderSelect]);
 
   return (
     <div className="sidebar__section">
       <div className="sidebar__section-title">File</div>
       <label className="file-btn">
-        Open NIfTI File
-        <input type="file" accept=".nii,.nii.gz" onChange={handleChange} style={{ display: 'none' }} />
+        Open DICOM Folder
+        <input type="file" onChange={handleChange} style={{ display: 'none' }}
+          {...({ webkitdirectory: '', directory: '' } as Record<string, string>)} />
       </label>
       {error && <div className="sidebar__error">{error}</div>}
     </div>
   );
 }
 
-function VolumeInfo({ volume }: { volume: NiftiVolume }) {
+function VolumeInfo({ volume }: { volume: MedVolume }) {
   const dims = volume.dimensions.join(' × ');
   const spacing = volume.spacing.map((s: number) => s.toFixed(3)).join(' × ');
   const typeName = DATATYPE_NAMES[volume.header.datatype] ?? String(volume.header.datatype);
@@ -1316,8 +1333,8 @@ function ViewControls({ windowLevel, onWindowLevelChange }: {
 function DropOverlay({ isDragOver }: { isDragOver: boolean }) {
   return (
     <div className={`drop-overlay${isDragOver ? ' active' : ''}`}>
-      <div>Drop .nii or .nii.gz file here</div>
-      <div className="drop-overlay__hint">or use the Open button in the sidebar</div>
+      <div>Use "Open DICOM Folder" to load a series</div>
+      <div className="drop-overlay__hint">Select a folder containing .dcm files from the sidebar</div>
     </div>
   );
 }
@@ -1336,13 +1353,11 @@ function LoadingSpinner() {
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [volume, setVolume] = useState<NiftiVolume | null>(null);
+  const [volume, setVolume] = useState<DicomVolume | null>(null);
   const [viewMode, setViewMode] = useState<'single' | 'mpr' | 'oblique' | 'volume3d'>('single');
   const [isDragOver, setIsDragOver] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  // Guard against React StrictMode double-invocation in development
-  const autoLoadRan = useRef(false);
   const [windowLevel, setWindowLevel] = useState<WindowLevelState>({ window: 255, level: 128 });
   const [crosshair, setCrosshair] = useState<CrosshairPosition | null>(null);
   // 3D volume rendering state
@@ -1366,13 +1381,12 @@ export default function App() {
     setCrosshair(initialCrosshair);
   }, [initialCrosshair]);
 
-  // ── File loading ──────────────────────────────────────────────────────────
-  const loadVolume = useCallback(async (file: File) => {
+  // ── DICOM folder loading ──────────────────────────────────────────────────
+  const loadVolume = useCallback(async (files: File[]) => {
     try {
       setIsLoading(true);
       setLoadError(null);
-      const buffer = await file.arrayBuffer();
-      const vol = await parseNifti(buffer);
+      const vol = await loadDicomFolder(files);
       setVolume(vol);
       setViewMode('single');
     } catch (err) {
@@ -1395,34 +1409,12 @@ export default function App() {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    const file = e.dataTransfer?.files[0];
-    if (file && (file.name.endsWith('.nii') || file.name.endsWith('.nii.gz'))) {
-      loadVolume(file);
+    // Accept dropped files — try to parse them as DICOM
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length > 0) {
+      loadVolume(files);
     }
   }, [loadVolume]);
-
-  // ── Auto-load demo file ──────────────────────────────────────────────────
-  useEffect(() => {
-    if (autoLoadRan.current) return;
-    autoLoadRan.current = true;
-
-    setIsLoading(true);
-    fetch('/fixtures/corocta_vessel_mask.nii.gz')
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        return res.arrayBuffer();
-      })
-      .then((buf) => parseNifti(buf))
-      .then((vol) => {
-        setVolume(vol);
-        setIsLoading(false);
-      })
-      .catch((err) => {
-        console.error('Failed to load demo file:', err);
-        setLoadError('Failed to load demo file. Please try loading a file manually.');
-        setIsLoading(false);
-      });
-  }, []);
 
   return (
     <div className="app">
@@ -1434,7 +1426,7 @@ export default function App() {
       />
       <div className="body">
         <aside className="sidebar">
-          <FileSection error={loadError} onFileSelect={loadVolume} />
+          <FileSection error={loadError} onFolderSelect={loadVolume} />
           {volume && <VolumeInfo volume={volume} />}
           {volume && (
             <ViewControls windowLevel={windowLevel} onWindowLevelChange={setWindowLevel} />

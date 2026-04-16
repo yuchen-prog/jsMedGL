@@ -9,8 +9,7 @@ import type {
 import { readElements, type TransferSyntax } from './tag-reader';
 import { decodeVR } from './vr-reader';
 import { buildHeaderDatatype } from './pixel-data';
-import { isSupportedTransferSyntax, needsDecompression, decompressDeflate, detectTransferSyntax, mapUidToTS } from './transfer-syntax';
-import { TRANSFER_SYNTAX } from './types';
+import { isSupportedTransferSyntax, needsDecompression, decompressDeflate, detectTransferSyntax } from './transfer-syntax';
 import { invertMatrix, trimDicomString, parseDS, identityMatrix } from './utils';
 
 export interface DicomParser {

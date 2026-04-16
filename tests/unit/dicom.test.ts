@@ -563,7 +563,7 @@ describe('readElements — synthetic buffer tests', () => {
     for (const p of parts) { result.set(p, off); off += p.length; }
 
     const elements = readElements(result.buffer as ArrayBuffer, 'explicit-le');
-    const el = elements.get('0020,000e');
+    const el = elements.get('0020,000E');
     expect(el).toBeDefined();
     expect(el?.value).toContain('1.2.840.10008.1.2.1');
   });
